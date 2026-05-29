@@ -70,8 +70,9 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 			buf.WriteString(strconv.Itoa(builtFile.Width))
 			buf.WriteString(`w`)
 		}
+		buf.WriteString(`"`)
 		if conf.SizesAttr != "" {
-			buf.WriteString(`" sizes="`)
+			buf.WriteString(` sizes="`)
 			buf.WriteString(conf.SizesAttr)
 			buf.WriteString(`"`)
 		}
