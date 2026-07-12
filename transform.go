@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+
+	"github.com/bmatcuk/doublestar"
 )
 
 // Yes I'm using a regex to parse HTML, yes everyone tells you not to do that.
@@ -115,13 +117,39 @@ func translateHtml(conf *transformConfig, inPath string, outPath string) (err er
 	return
 }
 
+// isBlacklisted reports whether file (an absolute-or-relative path under the
+// input folder) matches any of the config's Blacklist glob patterns. Patterns
+// are doublestar globs evaluated against the path relative to the input folder,
+// e.g. "**/*.mp4" matches videos at any depth.
+func (conf *config) isBlacklisted(file string) bool {
+	relPath, err := filepath.Rel(conf.InputFolderPath(), file)
+	if err != nil {
+		return false
+	}
+	for _, pattern := range conf.Blacklist {
+		if matched, err := doublestar.Match(pattern, relPath); err == nil && matched {
+			return true
+		}
+	}
+	return false
+}
+
 func transferAndTransform(conf *transformConfig, whitelist *[]string, file string) (err error) {
 	outPath := translatePath(conf.config, file)
 	// log.Printf("Walked %s,      translate to %s", file, outPath)
 	err = os.MkdirAll(path.Dir(outPath), os.ModePerm)
 	extension := path.Ext(file)
 
+	// Always whitelist the output path so deleteNonWhitelist keeps it, then bail
+	// out for blacklisted files. This leaves whatever is already at outPath (for
+	// example a symlink placed there by the build) untouched: enfasten neither
+	// overwrites nor deletes it. Used to keep large assets like videos as
+	// symlinks in the output instead of full copies.
 	*whitelist = append(*whitelist, outPath)
+	if conf.isBlacklisted(file) {
+		return
+	}
+
 	switch extension {
 	case ".html":
 		err = translateHtml(conf, file, outPath)
