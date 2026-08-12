@@ -86,14 +86,7 @@ func saveManifest(manifestPath string, manifest map[string]builtImage) (err erro
 		return
 	}
 
-	df, err := os.Create(manifestPath)
-	if err != nil {
-		return err
-	}
-	defer df.Close()
-	_, err = df.Write(out)
-
-	return
+	return writeFileIfChanged(manifestPath, out)
 }
 
 func hashFile(path string) (hash []byte, err error) {

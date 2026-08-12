@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -55,6 +56,18 @@ func (conf *config) InputFolderPath() string {
 }
 
 func copyFile(source string, dest string) error {
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	destInfo, err := os.Stat(dest)
+	if err == nil && destInfo.Size() == sourceInfo.Size() && destInfo.ModTime().Equal(sourceInfo.ModTime()) {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
 	sf, err := os.Open(source)
 	if err != nil {
 		return err
@@ -64,9 +77,25 @@ func copyFile(source string, dest string) error {
 	if err != nil {
 		return err
 	}
-	defer df.Close()
-	_, err = io.Copy(df, sf)
-	return err
+	if _, err = io.Copy(df, sf); err != nil {
+		df.Close()
+		return err
+	}
+	if err = df.Close(); err != nil {
+		return err
+	}
+	return os.Chtimes(dest, sourceInfo.ModTime(), sourceInfo.ModTime())
+}
+
+func writeFileIfChanged(filePath string, contents []byte) error {
+	existing, err := os.ReadFile(filePath)
+	if err == nil && bytes.Equal(existing, contents) {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(filePath, contents, 0o666)
 }
 
 func readFileBytes(path string) (bytes []byte, err error) {

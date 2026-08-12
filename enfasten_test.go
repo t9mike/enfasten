@@ -4,7 +4,90 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestCopyFilePreservesSourceModificationTime(t *testing.T) {
+	basePath := t.TempDir()
+	sourcePath := filepath.Join(basePath, "source.txt")
+	destPath := filepath.Join(basePath, "dest.txt")
+	if err := os.WriteFile(sourcePath, []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	firstTime := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(sourcePath, firstTime, firstTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(sourcePath, destPath); err != nil {
+		t.Fatal(err)
+	}
+
+	destInfo, err := os.Stat(destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !destInfo.ModTime().Equal(firstTime) {
+		t.Fatalf("destination mtime = %v, want %v", destInfo.ModTime(), firstTime)
+	}
+
+	if err := os.WriteFile(sourcePath, []byte("second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secondTime := firstTime.Add(time.Hour)
+	if err := os.Chtimes(sourcePath, secondTime, secondTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(sourcePath, destPath); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "second" {
+		t.Fatalf("destination contents = %q, want %q", contents, "second")
+	}
+	destInfo, err = os.Stat(destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !destInfo.ModTime().Equal(secondTime) {
+		t.Fatalf("updated destination mtime = %v, want %v", destInfo.ModTime(), secondTime)
+	}
+}
+
+func TestWriteFileIfChangedPreservesUnchangedModificationTime(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "output.html")
+	if err := os.WriteFile(filePath, []byte("unchanged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fixedTime := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(filePath, fixedTime, fixedTime); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeFileIfChanged(filePath, []byte("unchanged")); err != nil {
+		t.Fatal(err)
+	}
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fileInfo.ModTime().Equal(fixedTime) {
+		t.Fatalf("unchanged mtime = %v, want %v", fileInfo.ModTime(), fixedTime)
+	}
+
+	if err := writeFileIfChanged(filePath, []byte("changed")); err != nil {
+		t.Fatal(err)
+	}
+	fileInfo, err = os.Stat(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fileInfo.ModTime().Equal(fixedTime) {
+		t.Fatal("changed output kept the old modification time")
+	}
+}
 
 func TestNormalizeLanguageFilter(t *testing.T) {
 	for _, language := range []string{"en", "pt-BR", "zh-Hans"} {

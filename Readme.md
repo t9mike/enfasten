@@ -15,6 +15,7 @@ With Enfasten, no matter what static site generator you use, you can run your si
 Enfasten has a bunch of features that would take a long time to replicate in a script or [Gulp](https://gulpjs.com/) task you set up yourself:
 
 - **Incremental**: Enfasten will only spend time loading, resizing and optimizing new images. This is especially important when using an optimizer since optimization can take a *long* time. Optimizing all my site's images every time I built it would take an hour.
+- **Stable outputs**: Unchanged copied files, transformed HTML, and manifests are left untouched so timestamp-based deployment tools such as `rsync` only transfer real updates.
 - **Cache-friendly renaming**: Enfasten will put all your images in one folder and add hashes to their name so that you can tell your CDN/browsers to cache them indefinitely without invalidation issues.
 - **Fast**: It's not ridiculously optimized, but a build of my site with no new images takes `0.36s`, plus it only processes new images when necessary and uses a fast resizer.
 - **Culling**: Sometimes PNG optimizers can lead to images with larger dimensions having smaller file size than ones with smaller dimensions because of how compression interacts with resizing filters. Enfasten has a special mode to detect these and cull the inefficient downscaled images.

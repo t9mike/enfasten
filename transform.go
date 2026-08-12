@@ -379,6 +379,9 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 func translateHtml(conf *transformConfig, inPath string, outPath string) (err error) {
 	// log.Printf("Translating %s", inPath)
 	bytes, err := readFileBytes(inPath)
+	if err != nil {
+		return err
+	}
 
 	// set up for HTML relative paths
 	inputPath := path.Join(conf.basePath, conf.InputFolder)
@@ -397,14 +400,7 @@ func translateHtml(conf *transformConfig, inPath string, outPath string) (err er
 		return rebuilt
 	})
 
-	df, err := os.Create(outPath)
-	if err != nil {
-		return err
-	}
-	defer df.Close()
-	df.Write(newBytes)
-
-	return
+	return writeFileIfChanged(outPath, newBytes)
 }
 
 // isBlacklisted reports whether file (an absolute-or-relative path under the

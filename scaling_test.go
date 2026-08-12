@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSaveManifestSortsTopLevelKeys(t *testing.T) {
@@ -36,6 +37,10 @@ func TestSaveManifestSortsTopLevelKeys(t *testing.T) {
 	if !reflect.DeepEqual(topLevelKeys, want) {
 		t.Fatalf("manifest keys = %v, want %v", topLevelKeys, want)
 	}
+	fixedTime := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(manifestPath, fixedTime, fixedTime); err != nil {
+		t.Fatal(err)
+	}
 	if err := saveManifest(manifestPath, manifest); err != nil {
 		t.Fatalf("second saveManifest() error = %v", err)
 	}
@@ -45,6 +50,13 @@ func TestSaveManifestSortsTopLevelKeys(t *testing.T) {
 	}
 	if string(secondContents) != string(contents) {
 		t.Fatal("saveManifest() changed an unchanged manifest")
+	}
+	manifestInfo, err := os.Stat(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manifestInfo.ModTime().Equal(fixedTime) {
+		t.Fatalf("unchanged manifest mtime = %v, want %v", manifestInfo.ModTime(), fixedTime)
 	}
 
 	roundTripped, err := readManifest(manifestPath)
