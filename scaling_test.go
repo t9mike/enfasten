@@ -56,6 +56,21 @@ func TestSaveManifestSortsTopLevelKeys(t *testing.T) {
 	}
 }
 
+func TestOptimizationBatches(t *testing.T) {
+	images := []string{"a", "b", "c", "d", "e"}
+	want := [][]string{{"a", "b"}, {"c", "d"}, {"e"}}
+	if got := optimizationBatches(images, 2); !reflect.DeepEqual(got, want) {
+		t.Fatalf("optimizationBatches() = %#v, want %#v", got, want)
+	}
+
+	want = [][]string{images}
+	for _, batchSize := range []int{0, 5, 10} {
+		if got := optimizationBatches(images, batchSize); !reflect.DeepEqual(got, want) {
+			t.Fatalf("optimizationBatches(batchSize: %d) = %#v, want %#v", batchSize, got, want)
+		}
+	}
+}
+
 func TestManifestWebPConfigurationInvalidatesStaleEntries(t *testing.T) {
 	basePath := t.TempDir()
 	imagePath := filepath.Join(basePath, "site", "en", "images", "example.png")

@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"log"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,8 +21,12 @@ import (
 var imgRegex = regexp.MustCompile(`<img ([^>]*)src="([^"]+)"([^>]*)>`)
 var sizesAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)sizes\s*=`)
 var sizesAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)sizes\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+var maxDPRAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)data-enfasten-max-dpr\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 var widthAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)width\s*=`)
 var heightAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)height\s*=`)
+
+const highestAdjustedDPR = 4.0
+const adjustedDPRStep = 0.5
 
 type transformConfig struct {
 	*config
@@ -81,6 +87,174 @@ func effectiveSizesAttr(conf *transformConfig, keyPath string, captures [][]byte
 	return conf.sizesAttrForImage(keyPath)
 }
 
+func sourceAttributes(captures [][]byte) []byte {
+	return append(append([]byte{}, captures[1]...), captures[3]...)
+}
+
+func validateMaxDPR(maxDPR float64) error {
+	if maxDPR == 0 || (maxDPR >= 1 && maxDPR <= highestAdjustedDPR) {
+		return nil
+	}
+	return fmt.Errorf("maxdpr must be 0 (disabled) or between 1 and %.0f, got %g", highestAdjustedDPR, maxDPR)
+}
+
+func effectiveMaxDPR(conf *transformConfig, captures [][]byte) (float64, error) {
+	matches := maxDPRAttrRegex.FindAllSubmatch(sourceAttributes(captures), -1)
+	if len(matches) == 0 {
+		return conf.MaxDPR, nil
+	}
+	if len(matches) > 1 {
+		return 0, fmt.Errorf("an img may only specify data-enfasten-max-dpr once")
+	}
+
+	value := string(matches[0][1])
+	if value == "" {
+		value = string(matches[0][2])
+	}
+	value = strings.TrimSpace(value)
+	if strings.EqualFold(value, "none") {
+		return 0, nil
+	}
+	maxDPR, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid data-enfasten-max-dpr value %q", value)
+	}
+	if err = validateMaxDPR(maxDPR); err != nil {
+		return 0, fmt.Errorf("invalid data-enfasten-max-dpr value %q: %w", value, err)
+	}
+	return maxDPR, nil
+}
+
+type sourceSize struct {
+	media string
+	size  string
+}
+
+func splitSizesEntries(sizes string) ([]string, error) {
+	var entries []string
+	start := 0
+	depth := 0
+	for index, char := range sizes {
+		switch char {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return nil, fmt.Errorf("invalid sizes value %q: unmatched closing parenthesis", sizes)
+			}
+		case ',':
+			if depth == 0 {
+				entries = append(entries, strings.TrimSpace(sizes[start:index]))
+				start = index + 1
+			}
+		}
+	}
+	if depth != 0 {
+		return nil, fmt.Errorf("invalid sizes value %q: unmatched opening parenthesis", sizes)
+	}
+	entries = append(entries, strings.TrimSpace(sizes[start:]))
+	return entries, nil
+}
+
+func parseSourceSize(entry string) (sourceSize, error) {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return sourceSize{}, fmt.Errorf("sizes contains an empty entry")
+	}
+
+	depth := 0
+	tokenStart := 0
+	inToken := false
+	for index, char := range entry {
+		if depth == 0 && (char == ' ' || char == '\t' || char == '\n' || char == '\r') {
+			inToken = false
+			continue
+		}
+		if depth == 0 && !inToken {
+			tokenStart = index
+			inToken = true
+		}
+		switch char {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		}
+	}
+
+	size := strings.TrimSpace(entry[tokenStart:])
+	if size == "" || strings.EqualFold(size, "auto") {
+		return sourceSize{}, fmt.Errorf("maxdpr requires an explicit source size, got %q", size)
+	}
+	return sourceSize{
+		media: strings.TrimSpace(entry[:tokenStart]),
+		size:  size,
+	}, nil
+}
+
+func formatDPR(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func formatDPRFactor(value float64) string {
+	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(value, 'f', 4, 64), "0"), ".")
+}
+
+// maxDPRSizes adds higher-resolution branches ahead of the source sizes. Each
+// branch reduces the declared slot by maxDPR/deviceDPR, causing width-based
+// srcsets to target the configured density without degrading 1x/2x clients.
+// Half-step buckets keep common fractional Android densities close to the cap.
+func maxDPRSizes(sizes string, maxDPR float64) (string, error) {
+	if sizes == "" || maxDPR == 0 || maxDPR >= highestAdjustedDPR {
+		return sizes, nil
+	}
+	if err := validateMaxDPR(maxDPR); err != nil {
+		return "", err
+	}
+
+	rawEntries, err := splitSizesEntries(sizes)
+	if err != nil {
+		return "", err
+	}
+	entries := make([]sourceSize, 0, len(rawEntries))
+	for _, rawEntry := range rawEntries {
+		entry, parseErr := parseSourceSize(rawEntry)
+		if parseErr != nil {
+			return "", parseErr
+		}
+		entries = append(entries, entry)
+	}
+
+	var adjusted []string
+	firstDensity := math.Ceil(maxDPR/adjustedDPRStep) * adjustedDPRStep
+	if firstDensity <= maxDPR {
+		firstDensity += adjustedDPRStep
+	}
+	for deviceDPR := highestAdjustedDPR; deviceDPR >= firstDensity; deviceDPR -= adjustedDPRStep {
+		threshold := deviceDPR - adjustedDPRStep/2
+		factor := maxDPR / deviceDPR
+		resolution := `(min-resolution: ` + formatDPR(threshold) + `dppx)`
+		for _, entry := range entries {
+			media := resolution
+			if entry.media != "" {
+				media = entry.media + " and " + resolution
+			}
+			adjusted = append(adjusted, media+` calc((`+entry.size+`) * `+formatDPRFactor(factor)+`)`)
+		}
+	}
+	adjusted = append(adjusted, rawEntries...)
+	return strings.Join(adjusted, ", "), nil
+}
+
+func rewriteBuildAttributes(attrs []byte, sourceHadSizes bool, sizes string) []byte {
+	rewritten := maxDPRAttrRegex.ReplaceAll(attrs, nil)
+	if sourceHadSizes {
+		rewritten = sizesAttrValueRegex.ReplaceAll(rewritten, []byte(` sizes="`+sizes+`"`))
+	}
+	return rewritten
+}
+
 func writeSrcset(buf *bytes.Buffer, conf *transformConfig, files []builtImageFile) {
 	for i, builtFile := range files {
 		if i != 0 {
@@ -101,6 +275,19 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 	}
 	built := conf.manifest[slug]
 	sizesAttr := effectiveSizesAttr(conf, keyPath, captures)
+	maxDPR, err := effectiveMaxDPR(conf, captures)
+	if err != nil {
+		log.Printf("Invalid max DPR for %s: %v", keyPath, err)
+		return captures[0]
+	}
+	sizesAttr, err = maxDPRSizes(sizesAttr, maxDPR)
+	if err != nil {
+		log.Printf("Cannot apply max DPR to %s: %v", keyPath, err)
+		return captures[0]
+	}
+	sourceHadSizes := sizesAttrRegex.Match(captures[1]) || sizesAttrRegex.Match(captures[3])
+	beforeSrc := rewriteBuildAttributes(captures[1], sourceHadSizes, sizesAttr)
+	afterSrc := rewriteBuildAttributes(captures[3], sourceHadSizes, sizesAttr)
 
 	var buf bytes.Buffer
 	if len(built.WebPFiles) > 0 {
@@ -116,7 +303,7 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 	}
 
 	buf.WriteString("<img ")
-	buf.Write(captures[1])
+	buf.Write(beforeSrc)
 	buf.WriteString(`src="`)
 	buf.WriteString(nameToImagePath(conf.config, built.OriginalName))
 	buf.WriteString(`"`)
@@ -126,15 +313,14 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 		buf.WriteString(` srcset="`)
 		writeSrcset(&buf, conf, built.Files)
 		buf.WriteString(`"`)
-		hasSourceSizes := sizesAttrRegex.Match(captures[1]) || sizesAttrRegex.Match(captures[3])
-		if sizesAttr != "" && !hasSourceSizes {
+		if sizesAttr != "" && !sourceHadSizes {
 			buf.WriteString(` sizes="`)
 			buf.WriteString(sizesAttr)
 			buf.WriteString(`"`)
 		}
 	}
-	hasSourceWidth := widthAttrRegex.Match(captures[1]) || widthAttrRegex.Match(captures[3])
-	hasSourceHeight := heightAttrRegex.Match(captures[1]) || heightAttrRegex.Match(captures[3])
+	hasSourceWidth := widthAttrRegex.Match(beforeSrc) || widthAttrRegex.Match(afterSrc)
+	hasSourceHeight := heightAttrRegex.Match(beforeSrc) || heightAttrRegex.Match(afterSrc)
 	if len(built.WebPFiles) > 0 && !hasSourceWidth && !hasSourceHeight && built.Width > 0 && built.Height > 0 {
 		buf.WriteString(` width="`)
 		buf.WriteString(strconv.Itoa(built.Width))
@@ -143,7 +329,7 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 		buf.WriteString(`"`)
 	}
 
-	buf.Write(captures[3])
+	buf.Write(afterSrc)
 	buf.WriteString(`>`)
 	if len(built.WebPFiles) > 0 {
 		buf.WriteString(`</picture>`)

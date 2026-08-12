@@ -19,9 +19,13 @@ type config struct {
 	ImageFolder  string
 	ManifestFile string
 	SizesAttr    string
+	MaxDPR       float64
 	SizesRules   []sizesRule
 	OptimCommand []string
-	WebPCommand  []string
+	// Maximum number of image paths appended to each OptimCommand invocation.
+	// Zero keeps the historical single-command behavior.
+	OptimBatchSize int
+	WebPCommand    []string
 	// A number between 0-1 where if the downscaling is greater
 	// than this fraction of the width it doesn't bother.
 	ScaleThreshold    float64
@@ -78,13 +82,15 @@ func readFileBytes(path string) (bytes []byte, err error) {
 
 func readConfig(basePath string) (conf config, err error) {
 	conf = config{
-		InputFolder:  "_site",
-		OutputFolder: "_fastsite",
-		ImageFolder:  "assets/images",
-		ManifestFile: "enfasten_manifest.yml",
-		SizesAttr:    "",
-		OptimCommand: nil,
-		DoCopy:       true,
+		InputFolder:    "_site",
+		OutputFolder:   "_fastsite",
+		ImageFolder:    "assets/images",
+		ManifestFile:   "enfasten_manifest.yml",
+		SizesAttr:      "",
+		MaxDPR:         0,
+		OptimCommand:   nil,
+		OptimBatchSize: 32,
+		DoCopy:         true,
 		// ManifestFile:   "",
 		ScaleThreshold:    0.9,
 		JpgScaleThreshold: 0.7,
@@ -125,6 +131,12 @@ func buildFastSite(basePath string, doCulling bool, languageFilter string) (err 
 	conf.basePath = basePath
 	conf.doCulling = doCulling
 	conf.languageFilter = languageFilter
+	if err = validateMaxDPR(conf.MaxDPR); err != nil {
+		return
+	}
+	if conf.OptimBatchSize < 0 {
+		return fmt.Errorf("optimbatchsize must be zero or greater, got %d", conf.OptimBatchSize)
+	}
 
 	foundImages, err := discoverImages(&conf, path.Join(conf.basePath, conf.InputFolder))
 	if err != nil {

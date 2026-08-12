@@ -153,6 +153,10 @@ Enfasten is configred through an `enfasten.yml` file. All keys are optional, her
 inputfolder: _site
 outputfolder: _fastsite
 sizesattr: 660px
+# Optional responsive-density ceiling. Zero disables it. Enfasten preserves
+# normal selection at or below the ceiling and adds resolution-aware sizes
+# hints for common fractional and integer display densities through 4x.
+maxdpr: 0
 # Normal and retina resolutions:
 widths: [660,1320]
 # ImagOptim is a great optimizer for macOS, here's how to connect it:
@@ -192,6 +196,10 @@ sizesrules:
 # images. If non-null, Enfasten will append all the files needing optimization to
 # this, run it and wait for it to finish.
 optimcommand: null
+# Maximum number of new image paths passed to each optimizer invocation. This
+# avoids oversized commands and makes a failing batch easier to retry. Set to 0
+# to pass every new image in one command.
+optimbatchsize: 32
 # Optional WebP encoder command. For each responsive source image, Enfasten
 # appends the input path and `-o <output path>` and writes a picture/source
 # element ahead of the original-format img fallback.
@@ -213,6 +221,20 @@ widths: []
 # An array of Go file glob patterns relative to inputfolder of files not to process
 blacklist: []
 ```
+
+An individual source image can override the global ceiling with the build-only
+`data-enfasten-max-dpr` attribute. Enfasten consumes the attribute and does not
+copy it to generated HTML:
+
+```html
+<img src="images/hero.png" data-enfasten-max-dpr="2">
+<img src="images/detail.png" data-enfasten-max-dpr="3">
+<img src="images/original-density.png" data-enfasten-max-dpr="none">
+```
+
+`maxdpr` requires an explicit responsive `sizes` value, either on the source
+image, from a matching `sizesrules` entry, or from `sizesattr`. It changes only
+the browser's generated source-size hints; CSS layout dimensions are unchanged.
 
 **Note:** Enfasten detects changes to configured responsive widths and the WebP command. Other image-processing option changes such as `jpgquality` and `scalethreshold` may require deleting the manifest and processed images so they are rebuilt.
 

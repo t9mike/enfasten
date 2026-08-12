@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRebuildImageClosesSrcsetQuote(t *testing.T) {
 	conf := &transformConfig{
@@ -129,6 +132,89 @@ func TestRebuildImageKeepsSourceSizesInsteadOfAddingRule(t *testing.T) {
 
 	if got != want {
 		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
+func TestMaxDPRSizesPreservesLowerDensityAndCapsHigherDensity(t *testing.T) {
+	got, err := maxDPRSizes("(max-width: 40em) 90vw, 600px", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "(max-width: 40em) and (min-resolution: 3.75dppx) calc((90vw) * 0.5), " +
+		"(min-resolution: 3.75dppx) calc((600px) * 0.5), " +
+		"(max-width: 40em) and (min-resolution: 3.25dppx) calc((90vw) * 0.5714), " +
+		"(min-resolution: 3.25dppx) calc((600px) * 0.5714), " +
+		"(max-width: 40em) and (min-resolution: 2.75dppx) calc((90vw) * 0.6667), " +
+		"(min-resolution: 2.75dppx) calc((600px) * 0.6667), " +
+		"(max-width: 40em) and (min-resolution: 2.25dppx) calc((90vw) * 0.8), " +
+		"(min-resolution: 2.25dppx) calc((600px) * 0.8), " +
+		"(max-width: 40em) 90vw, 600px"
+	if got != want {
+		t.Fatalf("maxDPRSizes() = %q, want %q", got, want)
+	}
+}
+
+func TestRebuildImageUsesGlobalMaxDPR(t *testing.T) {
+	conf := exampleTransformConfig()
+	conf.MaxDPR = 2
+	conf.SizesRules = []sizesRule{
+		{Pattern: "**/images/example.png", Sizes: "90vw"},
+	}
+
+	match := []byte(`<img alt="Example" src="images/example.png">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	if !strings.Contains(got, `(min-resolution: 2.75dppx) calc((90vw) * 0.6667)`) {
+		t.Fatalf("global maxdpr was not applied: %q", got)
+	}
+	if !strings.Contains(got, `, 90vw"`) {
+		t.Fatalf("original sizes fallback was not preserved: %q", got)
+	}
+}
+
+func TestRebuildImageUsesAndStripsPerImageMaxDPROverride(t *testing.T) {
+	conf := exampleTransformConfig()
+	conf.MaxDPR = 3
+
+	match := []byte(`<img alt="Example" data-enfasten-max-dpr="2" sizes="90vw" src="images/example.png">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	if strings.Contains(got, "data-enfasten-max-dpr") {
+		t.Fatalf("build-only max DPR attribute leaked into output: %q", got)
+	}
+	if !strings.Contains(got, `(min-resolution: 2.75dppx) calc((90vw) * 0.6667)`) {
+		t.Fatalf("per-image max DPR override was not applied: %q", got)
+	}
+	if strings.Count(got, `sizes="`) != 1 {
+		t.Fatalf("source-authored sizes should be rewritten exactly once: %q", got)
+	}
+}
+
+func TestRebuildImageCanRaiseOrDisableGlobalMaxDPR(t *testing.T) {
+	conf := exampleTransformConfig()
+	conf.MaxDPR = 2
+
+	match := []byte(`<img alt="Example" data-enfasten-max-dpr="3" sizes="90vw" src="images/example.png">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	if strings.Contains(got, "2.75dppx") || !strings.Contains(got, "3.25dppx") {
+		t.Fatalf("per-image max DPR 3 did not replace global max DPR 2: %q", got)
+	}
+
+	match = []byte(`<img alt="Example" data-enfasten-max-dpr="none" sizes="90vw" src="images/example.png">`)
+	got = string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	if strings.Contains(got, "min-resolution") || strings.Contains(got, "data-enfasten-max-dpr") {
+		t.Fatalf("per-image max DPR none did not disable and strip the directive: %q", got)
+	}
+}
+
+func TestValidateMaxDPR(t *testing.T) {
+	for _, value := range []float64{0, 1, 2, 2.5, 3, 4} {
+		if err := validateMaxDPR(value); err != nil {
+			t.Fatalf("validateMaxDPR(%g) = %v", value, err)
+		}
+	}
+	for _, value := range []float64{-1, 0.5, 4.5} {
+		if err := validateMaxDPR(value); err == nil {
+			t.Fatalf("validateMaxDPR(%g) should fail", value)
+		}
 	}
 }
 

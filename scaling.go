@@ -478,11 +478,35 @@ func optimizeImages(conf *config, newImages []string) (err error) {
 		return
 	}
 
-	args := append(conf.OptimCommand, newImages...)
-	log.Printf("Optimizing with %v", args)
-	cmd := exec.Command(args[0], args[1:len(args)]...)
-	err = cmd.Run()
+	batches := optimizationBatches(newImages, conf.OptimBatchSize)
+	for index, batch := range batches {
+		args := append(append([]string{}, conf.OptimCommand...), batch...)
+		log.Printf("Optimizing batch %d/%d (%d images)", index+1, len(batches), len(batch))
+		cmd := exec.Command(args[0], args[1:len(args)]...)
+		if err = cmd.Run(); err != nil {
+			return fmt.Errorf("optimization batch %d/%d failed: %w", index+1, len(batches), err)
+		}
+	}
 	return
+}
+
+func optimizationBatches(images []string, batchSize int) [][]string {
+	if len(images) == 0 {
+		return nil
+	}
+	if batchSize <= 0 || batchSize >= len(images) {
+		return [][]string{images}
+	}
+
+	batches := make([][]string, 0, (len(images)+batchSize-1)/batchSize)
+	for start := 0; start < len(images); start += batchSize {
+		end := start + batchSize
+		if end > len(images) {
+			end = len(images)
+		}
+		batches = append(batches, images[start:end])
+	}
+	return batches
 }
 
 // sometimes optimizing images leads to ones with larger dimensions actually
@@ -561,7 +585,7 @@ func buildNewManifest(conf *config, foundImages []foundImage, oldManifest map[st
 		pathToSlug[relPath] = slug
 	}
 
-	log.Printf("New images: %v", newImages)
+	log.Printf("New images: %d", len(newImages))
 
 	err = optimizeImages(conf, newImages)
 
