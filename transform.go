@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/bmatcuk/doublestar"
 )
@@ -17,6 +18,9 @@ import (
 // This saves me having to do a bunch of tree traversal and serializing.
 var imgRegex = regexp.MustCompile(`<img ([^>]*)src="([^"]+)"([^>]*)>`)
 var sizesAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)sizes\s*=`)
+var sizesAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)sizes\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+var widthAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)width\s*=`)
+var heightAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)height\s*=`)
 
 type transformConfig struct {
 	*config
@@ -66,6 +70,29 @@ func (conf *config) sizesAttrForImage(relPath string) string {
 	return conf.SizesAttr
 }
 
+func effectiveSizesAttr(conf *transformConfig, keyPath string, captures [][]byte) string {
+	attrs := append(append([]byte{}, captures[1]...), captures[3]...)
+	if match := sizesAttrValueRegex.FindSubmatch(attrs); len(match) > 1 {
+		if len(match[1]) > 0 {
+			return string(match[1])
+		}
+		return string(match[2])
+	}
+	return conf.sizesAttrForImage(keyPath)
+}
+
+func writeSrcset(buf *bytes.Buffer, conf *transformConfig, files []builtImageFile) {
+	for i, builtFile := range files {
+		if i != 0 {
+			buf.WriteString(`, `)
+		}
+		buf.WriteString(nameToImagePath(conf.config, builtFile.FileName))
+		buf.WriteString(` `)
+		buf.WriteString(strconv.Itoa(builtFile.Width))
+		buf.WriteString(`w`)
+	}
+}
+
 func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []byte {
 	keyPath := findImagePath(conf.config, relPath, string(captures[2]))
 	slug, ok := conf.pathToSlug[keyPath]
@@ -73,8 +100,20 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 		return captures[0]
 	}
 	built := conf.manifest[slug]
+	sizesAttr := effectiveSizesAttr(conf, keyPath, captures)
 
 	var buf bytes.Buffer
+	if len(built.WebPFiles) > 0 {
+		buf.WriteString(`<picture><source type="image/webp" srcset="`)
+		writeSrcset(&buf, conf, built.WebPFiles)
+		buf.WriteString(`"`)
+		if sizesAttr != "" {
+			buf.WriteString(` sizes="`)
+			buf.WriteString(sizesAttr)
+			buf.WriteString(`"`)
+		}
+		buf.WriteString(`>`)
+	}
 
 	buf.WriteString("<img ")
 	buf.Write(captures[1])
@@ -85,17 +124,8 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 	// if there's only one image no point in it being responsive
 	if len(built.Files) > 1 {
 		buf.WriteString(` srcset="`)
-		for i, builtFile := range built.Files {
-			if i != 0 {
-				buf.WriteString(`, `)
-			}
-			buf.WriteString(nameToImagePath(conf.config, builtFile.FileName))
-			buf.WriteString(` `)
-			buf.WriteString(strconv.Itoa(builtFile.Width))
-			buf.WriteString(`w`)
-		}
+		writeSrcset(&buf, conf, built.Files)
 		buf.WriteString(`"`)
-		sizesAttr := conf.sizesAttrForImage(keyPath)
 		hasSourceSizes := sizesAttrRegex.Match(captures[1]) || sizesAttrRegex.Match(captures[3])
 		if sizesAttr != "" && !hasSourceSizes {
 			buf.WriteString(` sizes="`)
@@ -103,9 +133,21 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 			buf.WriteString(`"`)
 		}
 	}
+	hasSourceWidth := widthAttrRegex.Match(captures[1]) || widthAttrRegex.Match(captures[3])
+	hasSourceHeight := heightAttrRegex.Match(captures[1]) || heightAttrRegex.Match(captures[3])
+	if len(built.WebPFiles) > 0 && !hasSourceWidth && !hasSourceHeight && built.Width > 0 && built.Height > 0 {
+		buf.WriteString(` width="`)
+		buf.WriteString(strconv.Itoa(built.Width))
+		buf.WriteString(`" height="`)
+		buf.WriteString(strconv.Itoa(built.Height))
+		buf.WriteString(`"`)
+	}
 
 	buf.Write(captures[3])
 	buf.WriteString(`>`)
+	if len(built.WebPFiles) > 0 {
+		buf.WriteString(`</picture>`)
+	}
 
 	return buf.Bytes()
 }
@@ -195,15 +237,26 @@ func transferAndTransformAll(conf *transformConfig) (whitelist []string, err err
 		return transferAndTransform(conf, &whitelist, path)
 	}
 	inputPath := path.Join(conf.basePath, conf.InputFolder)
+	if conf.languageFilter != "" {
+		inputPath = path.Join(inputPath, conf.languageFilter)
+	}
 	err = filepath.Walk(inputPath, filepath.WalkFunc(walkFunk))
 	return
 }
 
 func deleteNonWhitelist(conf *config, whitelist []string) (err error) {
 	outputPath := path.Join(conf.basePath, conf.OutputFolder)
+	return deleteNonWhitelistUnder(conf, whitelist, outputPath)
+}
+
+func deleteNonWhitelistUnder(conf *config, whitelist []string, outputPath string) (err error) {
 
 	whiteMap := map[string]bool{}
 	for _, item := range whitelist {
+		relPath, relErr := filepath.Rel(outputPath, item)
+		if relErr != nil || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+			continue
+		}
 		whiteMap[item] = true
 
 		// TODO: this is wasteful as heck

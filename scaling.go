@@ -13,6 +13,8 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strings"
+	"sync"
 
 	"github.com/bamiaux/rez"
 	"github.com/bmatcuk/doublestar"
@@ -31,11 +33,15 @@ type builtImageFile struct {
 }
 
 type builtImage struct {
-	OriginalName string
-	Width        int
-	Height       int
-	Files        []builtImageFile
+	OriginalName  string
+	Width         int
+	Height        int
+	Files         []builtImageFile
+	WebPFiles     []builtImageFile `yaml:"webpfiles,omitempty"`
+	WebPSignature string           `yaml:"webpsignature,omitempty"`
 }
+
+const webPManifestVersion = "2"
 
 func readManifest(manifestPath string) (manifest map[string]builtImage, err error) {
 	if manifestPath == "" {
@@ -249,7 +255,131 @@ func manifestHasConfiguredWidths(conf *config, imagePath string, built builtImag
 			return false
 		}
 	}
+	if conf.shouldGenerateWebP(imagePath) {
+		if built.WebPSignature != conf.webPCommandSignature() {
+			return false
+		}
+		webPWidths := make(map[int]bool, len(built.WebPFiles))
+		for _, file := range built.WebPFiles {
+			webPWidths[file.Width] = true
+		}
+		for _, file := range webPCandidateFiles(built.Files) {
+			if !webPWidths[file.Width] {
+				return false
+			}
+		}
+	} else if !conf.webPConfiguredForImage(imagePath) && (len(built.WebPFiles) > 0 || built.WebPSignature != "") {
+		// Rebuild the manifest entry so removing a WebP rule also removes the
+		// picture source and allows the obsolete generated files to be cleaned.
+		return false
+	}
 	return true
+}
+
+func (conf *config) webPCommandSignature() string {
+	parts := append([]string{webPManifestVersion}, conf.WebPCommand...)
+	hash := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return fmt.Sprintf("%x", hash[:8])
+}
+
+func (conf *config) webPConfiguredForImage(imagePath string) bool {
+	if len(conf.WebPCommand) == 0 {
+		return false
+	}
+	relPath, err := filepath.Rel(conf.InputFolderPath(), imagePath)
+	if err != nil {
+		return false
+	}
+	rule := conf.responsiveRuleForImage(filepath.ToSlash(relPath))
+	return rule != nil && rule.WebP
+}
+
+func (conf *config) shouldGenerateWebP(imagePath string) bool {
+	if !conf.webPConfiguredForImage(imagePath) {
+		return false
+	}
+	if conf.languageFilter == "" {
+		return true
+	}
+
+	relPath, err := filepath.Rel(conf.InputFolderPath(), imagePath)
+	if err != nil {
+		return false
+	}
+	relPath = filepath.ToSlash(relPath)
+	language := strings.Trim(conf.languageFilter, "/")
+	return relPath == language || strings.HasPrefix(relPath, language+"/")
+}
+
+func webPFileName(fileName string) string {
+	return strings.TrimSuffix(fileName, path.Ext(fileName)) + ".webp"
+}
+
+func webPCandidateFiles(files []builtImageFile) []builtImageFile {
+	if len(files) > 1 {
+		// Responsive rules describe bounded layout slots, so the largest scaled
+		// candidate is sufficient. Keep the oversized original only as the
+		// original-format fallback rather than offering it to WebP browsers.
+		return files[1:]
+	}
+	return files
+}
+
+func encodeWebP(conf *config, inputPath string, outputPath string) error {
+	temporaryPath := outputPath + ".tmp"
+	_ = os.Remove(temporaryPath)
+	args := append([]string{}, conf.WebPCommand[1:]...)
+	args = append(args, inputPath, "-o", temporaryPath)
+	log.Printf("Encoding WebP %s", outputPath)
+	cmd := exec.Command(conf.WebPCommand[0], args...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("WebP encoder failed for %s: %w: %s", inputPath, err, output)
+	}
+	if err := os.Rename(temporaryPath, outputPath); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	return nil
+}
+
+func buildWebPImages(conf *config, imagePath string, built *builtImage) error {
+	if !conf.shouldGenerateWebP(imagePath) {
+		return nil
+	}
+
+	imageFolder := conf.ImageFolderPath()
+	built.WebPSignature = conf.webPCommandSignature()
+	var waitGroup sync.WaitGroup
+	semaphore := make(chan struct{}, 3)
+	var firstError error
+	var errorMutex sync.Mutex
+	for _, sourceFile := range webPCandidateFiles(built.Files) {
+		outputFile := builtImageFile{
+			FileName: webPFileName(sourceFile.FileName),
+			Width:    sourceFile.Width,
+			Height:   sourceFile.Height,
+		}
+		built.WebPFiles = append(built.WebPFiles, outputFile)
+
+		outputPath := path.Join(imageFolder, outputFile.FileName)
+		inputPath := path.Join(imageFolder, sourceFile.FileName)
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			if err := encodeWebP(conf, inputPath, outputPath); err != nil {
+				errorMutex.Lock()
+				if firstError == nil {
+					firstError = err
+				}
+				errorMutex.Unlock()
+			}
+		}()
+	}
+	waitGroup.Wait()
+	return firstError
 }
 
 func buildImage(conf *config, imagePath string, slug string, newImages *[]string) (built builtImage, err error) {
@@ -336,6 +466,9 @@ func buildImage(conf *config, imagePath string, slug string, newImages *[]string
 	sort.Slice(built.Files, func(i, j int) bool {
 		return built.Files[i].Width > built.Files[j].Width
 	})
+	if err = buildWebPImages(conf, imagePath, &built); err != nil {
+		return
+	}
 
 	return
 }
@@ -360,10 +493,16 @@ func cullImages(conf *config, built builtImage) builtImage {
 		return built
 	}
 
+	built.Files = cullImageFiles(conf, built.Files)
+	built.WebPFiles = cullImageFiles(conf, built.WebPFiles)
+	return built
+}
+
+func cullImageFiles(conf *config, files []builtImageFile) []builtImageFile {
 	newFiles := []builtImageFile{}
 	var bestSize int64 = 1000000000 // arbitrary large number, 1GB
 	imageFolder := conf.ImageFolderPath()
-	for _, builtFile := range built.Files {
+	for _, builtFile := range files {
 		info, err := os.Stat(path.Join(imageFolder, builtFile.FileName))
 		if err != nil {
 			log.Printf("Couldn't stat %s, removing from manifest", builtFile.FileName)
@@ -378,8 +517,11 @@ func cullImages(conf *config, built builtImage) builtImage {
 		}
 	}
 
-	built.Files = newFiles
-	return built
+	return newFiles
+}
+
+func shouldRebuildDuplicate(conf *config, imagePath string, built builtImage) bool {
+	return conf.shouldGenerateWebP(imagePath) && !manifestHasConfiguredWidths(conf, imagePath, built)
 }
 
 func buildNewManifest(conf *config, foundImages []foundImage, oldManifest map[string]builtImage) (newManifest map[string]builtImage, pathToSlug map[string]string, err error) {
@@ -389,7 +531,19 @@ func buildNewManifest(conf *config, foundImages []foundImage, oldManifest map[st
 	inputPath := path.Join(conf.basePath, conf.InputFolder)
 	for _, img := range foundImages {
 		slug := getSlug(img.Path, img.Hash)
-		if built, ok := oldManifest[slug]; ok && manifestHasConfiguredWidths(conf, img.Path, built) {
+		if built, ok := newManifest[slug]; ok {
+			// Identical files in multiple locales share a slug. Never let a
+			// deferred locale overwrite WebP work already completed for the
+			// selected locale, but allow the selected locale to upgrade an entry
+			// first encountered outside the filter.
+			if shouldRebuildDuplicate(conf, img.Path, built) {
+				built, err = buildImage(conf, img.Path, slug, &newImages)
+				if err != nil {
+					return
+				}
+				newManifest[slug] = built
+			}
+		} else if built, ok := oldManifest[slug]; ok && manifestHasConfiguredWidths(conf, img.Path, built) {
 			newManifest[slug] = cullImages(conf, built)
 		} else {
 			var built builtImage

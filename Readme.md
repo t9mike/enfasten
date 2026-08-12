@@ -138,6 +138,8 @@ After you've installed enfasten, create an `enfasten.yml` config file in your st
 $ enfasten
 # Looks for an enfasten.yml in the specified directory
 $ enfasten -basepath my/site/folder
+# Transforms one language directory and defers other languages' new WebP work
+$ enfasten -lang en
 # Runs with culling, only do this once all your images are optimized
 $ enfasten -cull
 ```
@@ -179,15 +181,21 @@ sizesattr: ""
 # doublestar globs matched against image paths relative to inputfolder. The
 # first match wins, then sizesattr is used as the fallback. A sizes attribute
 # already present on the source img takes precedence over both. Optional widths
-# add image variants only for files matching that rule.
+# add image variants only for files matching that rule. Set webp to true to
+# generate a WebP source for matching images when webpcommand is configured.
 sizesrules:
   - pattern: '**/images/screenshots/*.png'
     sizes: '(min-width: 60em) 30em, 90vw'
     widths: [2200]
+    webp: true
 # An array of strings specifying a command and arguments to run to optimize
 # images. If non-null, Enfasten will append all the files needing optimization to
 # this, run it and wait for it to finish.
 optimcommand: null
+# Optional WebP encoder command. For each responsive source image, Enfasten
+# appends the input path and `-o <output path>` and writes a picture/source
+# element ahead of the original-format img fallback.
+webpcommand: null
 # Whether to copy/transform non-image files into the output. Set this to false if
 # you're only using Enfasten as an image resizing tool and parsing the generated
 # manifest with your own script.
@@ -206,7 +214,7 @@ widths: []
 blacklist: []
 ```
 
-**Note:** When changing the options that affect image processing like `widths`, `jpgquality` and `scalethreshold`, you may want to delete your manifest file and possibly also the processed images themselves. If you don't the old images won't be re-processed and will be left as is, if you do, Enfasten will rebuild any missing images.
+**Note:** Enfasten detects changes to configured responsive widths and the WebP command. Other image-processing option changes such as `jpgquality` and `scalethreshold` may require deleting the manifest and processed images so they are rebuilt.
 
 ## The Manifest
 

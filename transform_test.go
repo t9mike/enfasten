@@ -46,6 +46,77 @@ func TestRebuildImageUsesMatchingSizesRule(t *testing.T) {
 	}
 }
 
+func TestRebuildImageUsesWebPPictureAndIntrinsicDimensions(t *testing.T) {
+	conf := exampleTransformConfig()
+	conf.SizesRules = []sizesRule{
+		{Pattern: "**/images/example.png", Sizes: "(min-width: 60em) 30em, 90vw", WebP: true},
+	}
+	built := conf.manifest["example"]
+	built.Width = 1000
+	built.Height = 600
+	built.WebPFiles = []builtImageFile{
+		{FileName: "example-a1b2c3d4-original.webp", Width: 1000, Height: 600},
+		{FileName: "example-a1b2c3d4-500px.webp", Width: 500, Height: 300},
+	}
+	conf.manifest["example"] = built
+
+	match := []byte(`<img alt="Example" loading="lazy" src="images/example.png">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<picture><source type="image/webp" srcset="/assets/eimages/example-a1b2c3d4-original.webp 1000w, /assets/eimages/example-a1b2c3d4-500px.webp 500w" sizes="(min-width: 60em) 30em, 90vw"><img alt="Example" loading="lazy" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="(min-width: 60em) 30em, 90vw" width="1000" height="600"></picture>`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
+func TestRebuildImageKeepsSourceDimensions(t *testing.T) {
+	conf := exampleTransformConfig()
+	built := conf.manifest["example"]
+	built.Width = 1000
+	built.Height = 600
+	conf.manifest["example"] = built
+
+	match := []byte(`<img alt="Example" src="images/example.png" width="250" height="150">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" width="250" height="150">`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
+func TestRebuildImageDoesNotAddDimensionsWithoutModernSource(t *testing.T) {
+	conf := exampleTransformConfig()
+	built := conf.manifest["example"]
+	built.Width = 1000
+	built.Height = 600
+	conf.manifest["example"] = built
+
+	match := []byte(`<img alt="Example" src="images/example.png">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w">`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
+func TestRebuildImageDoesNotMixSourceAndGeneratedDimensions(t *testing.T) {
+	conf := exampleTransformConfig()
+	built := conf.manifest["example"]
+	built.Width = 1000
+	built.Height = 600
+	conf.manifest["example"] = built
+
+	match := []byte(`<img alt="Example" src="images/example.png" width="250">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" width="250">`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
 func TestRebuildImageKeepsSourceSizesInsteadOfAddingRule(t *testing.T) {
 	conf := exampleTransformConfig()
 	conf.SizesRules = []sizesRule{

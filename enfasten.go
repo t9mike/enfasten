@@ -2,11 +2,13 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"path"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 )
@@ -19,6 +21,7 @@ type config struct {
 	SizesAttr    string
 	SizesRules   []sizesRule
 	OptimCommand []string
+	WebPCommand  []string
 	// A number between 0-1 where if the downscaling is greater
 	// than this fraction of the width it doesn't bother.
 	ScaleThreshold    float64
@@ -29,12 +32,14 @@ type config struct {
 	Blacklist         []string
 	basePath          string
 	doCulling         bool
+	languageFilter    string
 }
 
 type sizesRule struct {
 	Pattern string
 	Sizes   string
 	Widths  []int
+	WebP    bool
 }
 
 func (conf *config) ImageFolderPath() string {
@@ -95,14 +100,31 @@ func readConfig(basePath string) (conf config, err error) {
 	return
 }
 
-func buildFastSite(basePath string, doCulling bool) (err error) {
+func normalizeLanguageFilter(languageFilter string) (string, error) {
+	languageFilter = strings.TrimSpace(languageFilter)
+	if languageFilter == "" {
+		return "", nil
+	}
+	if path.Clean(languageFilter) != languageFilter || path.Base(languageFilter) != languageFilter || languageFilter == "." || languageFilter == ".." {
+		return "", fmt.Errorf("invalid language filter %q", languageFilter)
+	}
+	return languageFilter, nil
+}
+
+func buildFastSite(basePath string, doCulling bool, languageFilter string) (err error) {
 	conf, err := readConfig(basePath)
+	if err != nil {
+		return
+	}
+
+	languageFilter, err = normalizeLanguageFilter(languageFilter)
 	if err != nil {
 		return
 	}
 
 	conf.basePath = basePath
 	conf.doCulling = doCulling
+	conf.languageFilter = languageFilter
 
 	foundImages, err := discoverImages(&conf, path.Join(conf.basePath, conf.InputFolder))
 	if err != nil {
@@ -157,11 +179,18 @@ func buildFastSite(basePath string, doCulling bool) (err error) {
 		for _, bImgFile := range bImg.Files {
 			whitelist = append(whitelist, path.Join(imageFolder, bImgFile.FileName))
 		}
+		for _, bImgFile := range bImg.WebPFiles {
+			whitelist = append(whitelist, path.Join(imageFolder, bImgFile.FileName))
+		}
 	}
 
 	// fmt.Printf("Keep: %v\n", whitelist)
 
-	err = deleteNonWhitelist(&conf, whitelist)
+	if conf.languageFilter == "" {
+		err = deleteNonWhitelist(&conf, whitelist)
+	} else {
+		err = deleteNonWhitelistUnder(&conf, whitelist, path.Join(conf.basePath, conf.OutputFolder, conf.languageFilter))
+	}
 
 	return
 }
@@ -169,8 +198,9 @@ func buildFastSite(basePath string, doCulling bool) (err error) {
 func main() {
 	basePath := flag.String("basepath", ".", "The folder in which to search for enfasten.yml")
 	cull := flag.Bool("cull", false, "Whether to cull inefficient images this run")
+	language := flag.String("lang", "", "Only transform and generate new WebP images beneath this input language directory")
 	flag.Parse()
-	err := buildFastSite(*basePath, *cull)
+	err := buildFastSite(*basePath, *cull, *language)
 	if err != nil {
 		log.Fatal("FATAL ERROR: ", err)
 	}
