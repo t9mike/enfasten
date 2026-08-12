@@ -30,3 +30,80 @@ func TestRebuildImageClosesSrcsetQuote(t *testing.T) {
 		t.Fatalf("rebuildImage() = %q, want %q", got, want)
 	}
 }
+
+func TestRebuildImageUsesMatchingSizesRule(t *testing.T) {
+	conf := exampleTransformConfig()
+	conf.SizesRules = []sizesRule{
+		{Pattern: "**/images/example.png", Sizes: "(min-width: 60em) 30em, 90vw"},
+	}
+
+	match := []byte(`<img alt="Example" src="images/example.png">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="(min-width: 60em) 30em, 90vw">`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
+func TestRebuildImageKeepsSourceSizesInsteadOfAddingRule(t *testing.T) {
+	conf := exampleTransformConfig()
+	conf.SizesRules = []sizesRule{
+		{Pattern: "**/images/example.png", Sizes: "100vw"},
+	}
+
+	match := []byte(`<img alt="Example" src="images/example.png" sizes="50vw">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="50vw">`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
+func TestWidthsForImageAddsOnlyMatchingRuleWidths(t *testing.T) {
+	conf := &config{
+		InputFolder: "site",
+		Widths:      []int{330, 660},
+		SizesRules: []sizesRule{
+			{Pattern: "**/images/hero.png", Widths: []int{2200}},
+		},
+		basePath: "/example",
+	}
+
+	got := conf.widthsForImage("/example/site/en/images/hero.png")
+	want := []int{330, 660, 2200}
+	if len(got) != len(want) {
+		t.Fatalf("widthsForImage() = %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("widthsForImage() = %v, want %v", got, want)
+		}
+	}
+
+	unmatched := conf.widthsForImage("/example/site/en/images/other.png")
+	if len(unmatched) != 2 || unmatched[0] != 330 || unmatched[1] != 660 {
+		t.Fatalf("unmatched widthsForImage() = %v, want [330 660]", unmatched)
+	}
+}
+
+func exampleTransformConfig() *transformConfig {
+	return &transformConfig{
+		config: &config{
+			ImageFolder: "assets/eimages",
+		},
+		manifest: map[string]builtImage{
+			"example": {
+				OriginalName: "example-a1b2c3d4-original.png",
+				Files: []builtImageFile{
+					{FileName: "example-a1b2c3d4-original.png", Width: 1000},
+					{FileName: "example-a1b2c3d4-500px.png", Width: 500},
+				},
+			},
+		},
+		pathToSlug: map[string]string{
+			"en/images/example.png": "example",
+		},
+	}
+}

@@ -180,6 +180,61 @@ func saveImage(conf *config, outPath string, extension string, img image.Image) 
 	return
 }
 
+func (conf *config) widthsForImage(imagePath string) []int {
+	widthSet := make(map[int]bool, len(conf.Widths))
+	for _, width := range conf.Widths {
+		widthSet[width] = true
+	}
+
+	relPath, err := filepath.Rel(conf.InputFolderPath(), imagePath)
+	if err == nil {
+		if rule := conf.responsiveRuleForImage(filepath.ToSlash(relPath)); rule != nil {
+			for _, width := range rule.Widths {
+				widthSet[width] = true
+			}
+		}
+	}
+
+	widths := make([]int, 0, len(widthSet))
+	for width := range widthSet {
+		widths = append(widths, width)
+	}
+	sort.Ints(widths)
+	return widths
+}
+
+func configuredScaledWidths(conf *config, imagePath string, sourceWidth int) []int {
+	extension := path.Ext(imagePath)
+	var widths []int
+	for _, width := range conf.widthsForImage(imagePath) {
+		if width >= sourceWidth {
+			continue
+		}
+		downscaleRatio := float64(width) / float64(sourceWidth)
+		if downscaleRatio > conf.ScaleThreshold {
+			continue
+		}
+		if downscaleRatio > conf.JpgScaleThreshold && extension == ".jpg" {
+			continue
+		}
+		widths = append(widths, width)
+	}
+	return widths
+}
+
+func manifestHasConfiguredWidths(conf *config, imagePath string, built builtImage) bool {
+	builtWidths := make(map[int]bool, len(built.Files))
+	for _, file := range built.Files {
+		builtWidths[file.Width] = true
+	}
+	for _, width := range configuredScaledWidths(conf, imagePath, built.Width) {
+		if !builtWidths[width] {
+			return false
+		}
+	}
+	return true
+}
+
 func buildImage(conf *config, imagePath string, slug string, newImages *[]string) (built builtImage, err error) {
 	log.Printf("Building image %s from %s", slug, imagePath)
 	extension := path.Ext(imagePath)
@@ -229,24 +284,9 @@ func buildImage(conf *config, imagePath string, slug string, newImages *[]string
 	built.Files = append(built.Files, builtOriginal)
 
 	// resize to relevant sizes
-	for _, w := range conf.Widths {
-		if w >= built.Width {
-			continue // we never want to upscale
-		}
-
+	for _, w := range configuredScaledWidths(conf, imagePath, built.Width) {
 		downscaleRatio := float64(w) / float64(built.Width)
 		destHeight := int(float64(built.Height) * downscaleRatio)
-
-		if downscaleRatio > conf.ScaleThreshold {
-			continue // too small of a change in size to be worth it
-		}
-
-		if downscaleRatio > conf.JpgScaleThreshold && extension == ".jpg" {
-			// re-encoding JPEG at a slightly smaller size either:
-			// - loses quality if we don't encode the output at 100
-			// - increases size if we encode the output at 100
-			continue
-		}
 
 		log.Printf("Downscaling %s from %v to (%d,%d)", slug, inputImage.Bounds(), w, destHeight)
 
@@ -332,7 +372,7 @@ func buildNewManifest(conf *config, foundImages []foundImage, oldManifest map[st
 	inputPath := path.Join(conf.basePath, conf.InputFolder)
 	for _, img := range foundImages {
 		slug := getSlug(img.Path, img.Hash)
-		if built, ok := oldManifest[slug]; ok {
+		if built, ok := oldManifest[slug]; ok && manifestHasConfiguredWidths(conf, img.Path, built) {
 			newManifest[slug] = cullImages(conf, built)
 		} else {
 			var built builtImage

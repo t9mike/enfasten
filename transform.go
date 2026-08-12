@@ -16,6 +16,7 @@ import (
 // This is for personal sites so if this doesn't match your HTML, fix your HTML.
 // This saves me having to do a bunch of tree traversal and serializing.
 var imgRegex = regexp.MustCompile(`<img ([^>]*)src="([^"]+)"([^>]*)>`)
+var sizesAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)sizes\s*=`)
 
 type transformConfig struct {
 	*config
@@ -42,6 +43,27 @@ func findImagePath(conf *config, fileDir string, relRef string) string {
 
 func nameToImagePath(conf *config, name string) string {
 	return path.Join("/", conf.ImageFolder, name)
+}
+
+func (conf *config) responsiveRuleForImage(relPath string) *sizesRule {
+	for _, rule := range conf.SizesRules {
+		matched, err := doublestar.Match(rule.Pattern, relPath)
+		if err != nil {
+			log.Printf("Invalid responsive-image sizes pattern %q: %v", rule.Pattern, err)
+			continue
+		}
+		if matched {
+			return &rule
+		}
+	}
+	return nil
+}
+
+func (conf *config) sizesAttrForImage(relPath string) string {
+	if rule := conf.responsiveRuleForImage(relPath); rule != nil && rule.Sizes != "" {
+		return rule.Sizes
+	}
+	return conf.SizesAttr
 }
 
 func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []byte {
@@ -73,9 +95,11 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 			buf.WriteString(`w`)
 		}
 		buf.WriteString(`"`)
-		if conf.SizesAttr != "" {
+		sizesAttr := conf.sizesAttrForImage(keyPath)
+		hasSourceSizes := sizesAttrRegex.Match(captures[1]) || sizesAttrRegex.Match(captures[3])
+		if sizesAttr != "" && !hasSourceSizes {
 			buf.WriteString(` sizes="`)
-			buf.WriteString(conf.SizesAttr)
+			buf.WriteString(sizesAttr)
 			buf.WriteString(`"`)
 		}
 	}

@@ -24,6 +24,7 @@ Enfasten has a bunch of features that would take a long time to replicate in a s
 - Keeps originals: Your originals are copied, hashed, losslessly optimized, and offered in srcset attributes, because why not. This also enables the features of avoiding small resizes and only downscaling.
 - Blacklisting: I have [a post on my site](http://thume.ca/projects/2012/11/14/magic-png-files/) about special trickily-crafted PNG files, I can tell Enfasten not to mess with those and ruin the effect.
 - Even rewrites relative `img` `src` attributes.
+- Supports ordered path-based `sizes` rules when one global `sizes` value cannot describe every image layout.
 - Supports `png` and `jpg` files, everything else is left alone.
 - Works with any static site generator!
 
@@ -174,6 +175,15 @@ manifestfile: enfasten_manifest.yml
 # The contents of the "sizes" attribute for responsive image tags, if this is
 # the empty string the attribute will be omitted.
 sizesattr: ""
+# Optional ordered rules for layout-specific sizes values. Patterns are
+# doublestar globs matched against image paths relative to inputfolder. The
+# first match wins, then sizesattr is used as the fallback. A sizes attribute
+# already present on the source img takes precedence over both. Optional widths
+# add image variants only for files matching that rule.
+sizesrules:
+  - pattern: '**/images/screenshots/*.png'
+    sizes: '(min-width: 60em) 30em, 90vw'
+    widths: [2200]
 # An array of strings specifying a command and arguments to run to optimize
 # images. If non-null, Enfasten will append all the files needing optimization to
 # this, run it and wait for it to finish.
@@ -226,4 +236,3 @@ It sounded like a word that would mean "to make fast". It also sounds like [Emsc
 ## License
 
 This project is released under the Apache license and was written by [Tristan Hume](http://thume.ca/)
-

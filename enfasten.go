@@ -17,6 +17,7 @@ type config struct {
 	ImageFolder  string
 	ManifestFile string
 	SizesAttr    string
+	SizesRules   []sizesRule
 	OptimCommand []string
 	// A number between 0-1 where if the downscaling is greater
 	// than this fraction of the width it doesn't bother.
@@ -28,6 +29,12 @@ type config struct {
 	Blacklist         []string
 	basePath          string
 	doCulling         bool
+}
+
+type sizesRule struct {
+	Pattern string
+	Sizes   string
+	Widths  []int
 }
 
 func (conf *config) ImageFolderPath() string {
