@@ -58,7 +58,24 @@ func saveManifest(manifestPath string, manifest map[string]builtImage) (err erro
 		return // don't persist manifest
 	}
 
-	out, err := yaml.Marshal(manifest)
+	// Go deliberately randomizes map iteration order. Serialize the top-level
+	// image slugs in a canonical order so an unchanged build does not rewrite
+	// the manifest with ordering-only differences.
+	keys := make([]string, 0, len(manifest))
+	for key := range manifest {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	orderedManifest := make(yaml.MapSlice, 0, len(keys))
+	for _, key := range keys {
+		orderedManifest = append(orderedManifest, yaml.MapItem{
+			Key:   key,
+			Value: manifest[key],
+		})
+	}
+
+	out, err := yaml.Marshal(orderedManifest)
 	if err != nil {
 		return
 	}
