@@ -25,6 +25,7 @@ Enfasten has a bunch of features that would take a long time to replicate in a s
 - Blacklisting: I have [a post on my site](http://thume.ca/projects/2012/11/14/magic-png-files/) about special trickily-crafted PNG files, I can tell Enfasten not to mess with those and ruin the effect.
 - Even rewrites relative `img` `src` attributes.
 - Supports ordered path-based `sizes` rules when one global `sizes` value cannot describe every image layout.
+- Adds intrinsic dimensions to generated WebP `source` elements and their `img` fallbacks so responsive images reserve their layout space before loading.
 - Supports `png` and `jpg` files, everything else is left alone.
 - Works with any static site generator!
 

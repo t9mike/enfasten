@@ -65,7 +65,30 @@ func TestRebuildImageUsesWebPPictureAndIntrinsicDimensions(t *testing.T) {
 
 	match := []byte(`<img alt="Example" loading="lazy" src="images/example.png">`)
 	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
-	want := `<picture><source type="image/webp" srcset="/assets/eimages/example-a1b2c3d4-original.webp 1000w, /assets/eimages/example-a1b2c3d4-500px.webp 500w" sizes="(min-width: 60em) 30em, 90vw"><img alt="Example" loading="lazy" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="(min-width: 60em) 30em, 90vw" width="1000" height="600"></picture>`
+	want := `<picture><source type="image/webp" srcset="/assets/eimages/example-a1b2c3d4-original.webp 1000w, /assets/eimages/example-a1b2c3d4-500px.webp 500w" sizes="(min-width: 60em) 30em, 90vw" width="1000" height="600"><img alt="Example" loading="lazy" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="(min-width: 60em) 30em, 90vw" width="1000" height="600"></picture>`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
+func TestRebuildImageCopiesAuthoredDimensionsToWebPSource(t *testing.T) {
+	conf := exampleTransformConfig()
+	conf.SizesRules = []sizesRule{
+		{Pattern: "**/images/example.png", WebP: true},
+	}
+	built := conf.manifest["example"]
+	built.Width = 1000
+	built.Height = 600
+	built.WebPFiles = []builtImageFile{
+		{FileName: "example-a1b2c3d4-original.webp", Width: 1000, Height: 600},
+		{FileName: "example-a1b2c3d4-500px.webp", Width: 500, Height: 300},
+	}
+	conf.manifest["example"] = built
+
+	match := []byte(`<img alt="Example" width='250' src="images/example.png" height=150>`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<picture><source type="image/webp" srcset="/assets/eimages/example-a1b2c3d4-original.webp 1000w, /assets/eimages/example-a1b2c3d4-500px.webp 500w" width="250" height="150"><img alt="Example" width='250' src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" height=150></picture>`
 
 	if got != want {
 		t.Fatalf("rebuildImage() = %q, want %q", got, want)

@@ -24,6 +24,8 @@ var sizesAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)sizes\s*=\s*(?:"([^"]*
 var maxDPRAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)data-enfasten-max-dpr\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 var widthAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)width\s*=`)
 var heightAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)height\s*=`)
+var widthAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)width\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))`)
+var heightAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)height\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))`)
 
 const highestAdjustedDPR = 4.0
 const adjustedDPRStep = 0.5
@@ -267,6 +269,27 @@ func writeSrcset(buf *bytes.Buffer, conf *transformConfig, files []builtImageFil
 	}
 }
 
+func attributeValue(attrs []byte, valueRegex *regexp.Regexp) (string, bool) {
+	match := valueRegex.FindSubmatch(attrs)
+	if len(match) == 0 {
+		return "", false
+	}
+	for _, value := range match[1:] {
+		if value != nil {
+			return string(value), true
+		}
+	}
+	return "", false
+}
+
+func writeDimensionAttribute(buf *bytes.Buffer, name string, value string) {
+	buf.WriteString(` `)
+	buf.WriteString(name)
+	buf.WriteString(`="`)
+	buf.WriteString(value)
+	buf.WriteString(`"`)
+}
+
 func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []byte {
 	keyPath := findImagePath(conf.config, relPath, string(captures[2]))
 	slug, ok := conf.pathToSlug[keyPath]
@@ -288,6 +311,17 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 	sourceHadSizes := sizesAttrRegex.Match(captures[1]) || sizesAttrRegex.Match(captures[3])
 	beforeSrc := rewriteBuildAttributes(captures[1], sourceHadSizes, sizesAttr)
 	afterSrc := rewriteBuildAttributes(captures[3], sourceHadSizes, sizesAttr)
+	attrs := append(append([]byte{}, beforeSrc...), afterSrc...)
+	hasSourceWidth := widthAttrRegex.Match(attrs)
+	hasSourceHeight := heightAttrRegex.Match(attrs)
+	sourceWidth, hasSourceWidthValue := attributeValue(attrs, widthAttrValueRegex)
+	sourceHeight, hasSourceHeightValue := attributeValue(attrs, heightAttrValueRegex)
+	if !hasSourceWidth && !hasSourceHeight && built.Width > 0 && built.Height > 0 {
+		sourceWidth = strconv.Itoa(built.Width)
+		sourceHeight = strconv.Itoa(built.Height)
+		hasSourceWidthValue = true
+		hasSourceHeightValue = true
+	}
 
 	var buf bytes.Buffer
 	if len(built.WebPFiles) > 0 {
@@ -298,6 +332,12 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 			buf.WriteString(` sizes="`)
 			buf.WriteString(sizesAttr)
 			buf.WriteString(`"`)
+		}
+		if hasSourceWidthValue {
+			writeDimensionAttribute(&buf, "width", sourceWidth)
+		}
+		if hasSourceHeightValue {
+			writeDimensionAttribute(&buf, "height", sourceHeight)
 		}
 		buf.WriteString(`>`)
 	}
@@ -319,8 +359,6 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 			buf.WriteString(`"`)
 		}
 	}
-	hasSourceWidth := widthAttrRegex.Match(beforeSrc) || widthAttrRegex.Match(afterSrc)
-	hasSourceHeight := heightAttrRegex.Match(beforeSrc) || heightAttrRegex.Match(afterSrc)
 	if len(built.WebPFiles) > 0 && !hasSourceWidth && !hasSourceHeight && built.Width > 0 && built.Height > 0 {
 		buf.WriteString(` width="`)
 		buf.WriteString(strconv.Itoa(built.Width))
