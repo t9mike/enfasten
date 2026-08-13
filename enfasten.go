@@ -35,6 +35,8 @@ type config struct {
 	DoCopy            bool
 	Widths            []int
 	Blacklist         []string
+	// PNG/JPEG paths copied normally but excluded from responsive processing.
+	PassthroughImages []string
 	basePath          string
 	doCulling         bool
 	languageFilter    string

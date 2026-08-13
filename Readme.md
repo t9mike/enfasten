@@ -24,6 +24,7 @@ Enfasten has a bunch of features that would take a long time to replicate in a s
 - Proper copying: When copying and transforming files from your input folder to your output folder, Enfasten will make sure to delete files in the output folder that shouldn't be there anymore.
 - Keeps originals: Your originals are copied, hashed, losslessly optimized, and offered in srcset attributes, because why not. This also enables the features of avoiding small resizes and only downscaling.
 - Blacklisting: I have [a post on my site](http://thume.ca/projects/2012/11/14/magic-png-files/) about special trickily-crafted PNG files, I can tell Enfasten not to mess with those and ruin the effect.
+- Pass-through images: PNG/JPEG files such as favicons that do not benefit from responsive variants can be copied to their original output paths without hashing, resizing, manifest entries, or optimizer batches.
 - Even rewrites relative `img` `src` attributes.
 - Supports ordered path-based `sizes` rules when one global `sizes` value cannot describe every image layout.
 - Adds intrinsic dimensions to generated WebP `source` elements and their `img` fallbacks so responsive images reserve their layout space before loading.
@@ -177,6 +178,9 @@ inputfolder: _site
 outputfolder: _fastsite
 # The folder to put all images in, relative to outputfolder
 imagefolder: assets/images
+# PNG/JPEG globs relative to inputfolder that should be copied normally but not
+# processed as responsive images or added to the manifest/optimizer queue.
+passthroughimages: []
 # The file name for the manifest, relative to enfasten.yml If this is set to the
 # empty string, no manifest will be used.
 manifestfile: enfasten_manifest.yml

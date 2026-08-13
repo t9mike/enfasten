@@ -1,6 +1,9 @@
 package main
 
 import (
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,6 +11,60 @@ import (
 	"testing"
 	"time"
 )
+
+func writeTestPNG(t *testing.T, filePath string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.NRGBA{R: 255, A: 255})
+	if err := png.Encode(file, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPassthroughImagesAreCopiedButNotProcessed(t *testing.T) {
+	basePath := t.TempDir()
+	conf := &config{
+		InputFolder:       "site",
+		OutputFolder:      "fastsite",
+		PassthroughImages: []string{"**/favicon-*.png"},
+		basePath:          basePath,
+	}
+	faviconPath := filepath.Join(basePath, "site", "assets", "images", "favicon-32x32.png")
+	heroPath := filepath.Join(basePath, "site", "images", "hero.png")
+	writeTestPNG(t, faviconPath)
+	writeTestPNG(t, heroPath)
+
+	found, err := discoverImages(conf, conf.InputFolderPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || found[0].Path != heroPath {
+		t.Fatalf("discoverImages() = %#v, want only %s", found, heroPath)
+	}
+
+	transformConf := &transformConfig{
+		config:     conf,
+		manifest:   map[string]builtImage{},
+		pathToSlug: map[string]string{},
+	}
+	var whitelist []string
+	if err := transferAndTransform(transformConf, &whitelist, faviconPath); err != nil {
+		t.Fatal(err)
+	}
+	copiedPath := filepath.Join(basePath, "fastsite", "assets", "images", "favicon-32x32.png")
+	if _, err := os.Stat(copiedPath); err != nil {
+		t.Fatalf("passthrough image was not copied: %v", err)
+	}
+}
 
 func TestSaveManifestSortsTopLevelKeys(t *testing.T) {
 	manifestPath := filepath.Join(t.TempDir(), "manifest.yml")

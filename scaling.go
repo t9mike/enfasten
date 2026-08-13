@@ -106,17 +106,26 @@ func hashFile(path string) (hash []byte, err error) {
 }
 
 func isBlacklisted(conf *config, filePath string) bool {
-	if conf.Blacklist == nil {
+	return matchesImagePatterns(conf, filePath, conf.Blacklist, "blacklist")
+}
+
+func isPassthroughImage(conf *config, filePath string) bool {
+	return matchesImagePatterns(conf, filePath, conf.PassthroughImages, "passthroughimages")
+}
+
+func matchesImagePatterns(conf *config, filePath string, patterns []string, setting string) bool {
+	if patterns == nil {
 		return false
 	}
 	relPath, err := filepath.Rel(conf.InputFolderPath(), filePath)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
-	for _, blackPath := range conf.Blacklist {
-		matched, err := path.Match(blackPath, relPath)
+	relPath = filepath.ToSlash(relPath)
+	for _, pattern := range patterns {
+		matched, err := doublestar.Match(pattern, relPath)
 		if err != nil {
-			log.Fatalf("Invalid blacklist pattern '%s': %v", blackPath, err)
+			log.Fatalf("Invalid %s pattern %q: %v", setting, pattern, err)
 		}
 		if matched {
 			return true
@@ -132,7 +141,7 @@ func discoverImages(conf *config, inFolder string) (results []foundImage, err er
 	}
 
 	for _, path := range matches {
-		if isBlacklisted(conf, path) {
+		if isBlacklisted(conf, path) || isPassthroughImage(conf, path) {
 			continue
 		}
 
