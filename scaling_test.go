@@ -212,6 +212,30 @@ func TestLanguageFilterDefersWebPGenerationOutsideSelectedLocale(t *testing.T) {
 	}
 }
 
+func TestLanguageFilterGeneratesWebPForSharedImages(t *testing.T) {
+	basePath := t.TempDir()
+	conf := &config{
+		InputFolder:    "site",
+		WebPCommand:    []string{"cwebp"},
+		languageFilter: "en",
+		SharedImages:   []string{"assets/images/**"},
+		SizesRules: []sizesRule{
+			{Pattern: "assets/images/*.png", WebP: true},
+		},
+		basePath: basePath,
+	}
+
+	sharedPath := filepath.Join(basePath, "site", "assets", "images", "icon.png")
+	if !conf.shouldGenerateWebP(sharedPath) {
+		t.Fatal("shared image should generate WebP during a language-filtered build")
+	}
+
+	otherPath := filepath.Join(basePath, "site", "de", "images", "icon.png")
+	if conf.shouldGenerateWebP(otherPath) {
+		t.Fatal("unselected locale image should remain deferred")
+	}
+}
+
 func TestWebPCandidateFilesOmitsOversizedOriginal(t *testing.T) {
 	files := []builtImageFile{
 		{FileName: "example-original.png", Width: 3000},

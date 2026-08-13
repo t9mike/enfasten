@@ -113,6 +113,10 @@ func isPassthroughImage(conf *config, filePath string) bool {
 	return matchesImagePatterns(conf, filePath, conf.PassthroughImages, "passthroughimages")
 }
 
+func isSharedImage(conf *config, filePath string) bool {
+	return matchesImagePatterns(conf, filePath, conf.SharedImages, "sharedimages")
+}
+
 func matchesImagePatterns(conf *config, filePath string, patterns []string, setting string) bool {
 	if patterns == nil {
 		return false
@@ -310,7 +314,7 @@ func (conf *config) shouldGenerateWebP(imagePath string) bool {
 	}
 	relPath = filepath.ToSlash(relPath)
 	language := strings.Trim(conf.languageFilter, "/")
-	return relPath == language || strings.HasPrefix(relPath, language+"/")
+	return relPath == language || strings.HasPrefix(relPath, language+"/") || isSharedImage(conf, imagePath)
 }
 
 func webPFileName(fileName string) string {

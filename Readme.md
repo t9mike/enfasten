@@ -181,6 +181,9 @@ imagefolder: assets/images
 # PNG/JPEG globs relative to inputfolder that should be copied normally but not
 # processed as responsive images or added to the manifest/optimizer queue.
 passthroughimages: []
+# PNG/JPEG globs relative to inputfolder that remain eligible for WebP during
+# a language-filtered build because every locale shares them.
+sharedimages: []
 # The file name for the manifest, relative to enfasten.yml If this is set to the
 # empty string, no manifest will be used.
 manifestfile: enfasten_manifest.yml

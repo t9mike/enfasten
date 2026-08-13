@@ -37,9 +37,12 @@ type config struct {
 	Blacklist         []string
 	// PNG/JPEG paths copied normally but excluded from responsive processing.
 	PassthroughImages []string
-	basePath          string
-	doCulling         bool
-	languageFilter    string
+	// PNG/JPEG globs that remain eligible for WebP during a language-filtered
+	// build because they are shared by every locale.
+	SharedImages   []string
+	basePath       string
+	doCulling      bool
+	languageFilter string
 }
 
 type sizesRule struct {
