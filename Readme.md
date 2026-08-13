@@ -190,15 +190,18 @@ manifestfile: enfasten_manifest.yml
 # The contents of the "sizes" attribute for responsive image tags, if this is
 # the empty string the attribute will be omitted.
 sizesattr: ""
-# Optional ordered rules for layout-specific sizes values. Patterns are
+# Optional ordered rules for layout-specific sizes values and media gates. Patterns are
 # doublestar globs matched against image paths relative to inputfolder. The
 # first match wins, then sizesattr is used as the fallback. A sizes attribute
 # already present on the source img takes precedence over both. Optional widths
-# add image variants only for files matching that rule. Set webp to true to
-# generate a WebP source for matching images when webpcommand is configured.
+# add image variants only for files matching that rule. Optional media prevents
+# all real candidates from loading when its media query does not match. Set webp
+# to true to generate a WebP source for matching images when webpcommand is
+# configured.
 sizesrules:
   - pattern: '**/images/screenshots/*.png'
     sizes: '(min-width: 60em) 30em, 90vw'
+    media: '(min-width: 40em)'
     widths: [2200]
     webp: true
 # An array of strings specifying a command and arguments to run to optimize
@@ -244,6 +247,25 @@ copy it to generated HTML:
 `maxdpr` requires an explicit responsive `sizes` value, either on the source
 image, from a matching `sizesrules` entry, or from `sizesattr`. It changes only
 the browser's generated source-size hints; CSS layout dimensions are unchanged.
+
+An optional `media` value on a `sizesrules` entry prevents the real image from
+loading unless that media query matches. This is useful when separate image
+elements provide genuinely different mobile and desktop compositions. Enfasten
+emits media-gated modern and original-format `source` elements plus a transparent
+data-URL `img` fallback, so a nonmatching alternative produces no network image
+request.
+Unlike `sizes`, which chooses among candidates after the browser decides to load
+an image, `media` controls whether those candidates are eligible at all.
+
+The build-only `data-enfasten-media` attribute overrides a matching rule for one
+image occurrence. Use `none` to disable a rule's gate; Enfasten consumes the
+attribute in generated HTML:
+
+```html
+<img src="images/mobile-hero.png" data-enfasten-media="(max-width: 39.9375em)">
+<img src="images/desktop-hero.png" data-enfasten-media="(min-width: 40em)">
+<img src="images/always-visible.png" data-enfasten-media="none">
+```
 
 **Note:** Enfasten detects changes to configured responsive widths and the WebP command. Other image-processing option changes such as `jpgquality` and `scalethreshold` may require deleting the manifest and processed images so they are rebuilt.
 

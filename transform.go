@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"log"
 	"math"
 	"os"
@@ -22,6 +23,7 @@ var imgRegex = regexp.MustCompile(`<img ([^>]*)src="([^"]+)"([^>]*)>`)
 var sizesAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)sizes\s*=`)
 var sizesAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)sizes\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 var maxDPRAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)data-enfasten-max-dpr\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+var mediaAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)data-enfasten-media\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 var widthAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)width\s*=`)
 var heightAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)height\s*=`)
 var widthAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)width\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))`)
@@ -29,6 +31,7 @@ var heightAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)height\s*=\s*(?:"([^"
 
 const highestAdjustedDPR = 4.0
 const adjustedDPRStep = 0.5
+const transparentImage = `data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E`
 
 type transformConfig struct {
 	*config
@@ -78,6 +81,13 @@ func (conf *config) sizesAttrForImage(relPath string) string {
 	return conf.SizesAttr
 }
 
+func (conf *config) mediaAttrForImage(relPath string) string {
+	if rule := conf.responsiveRuleForImage(relPath); rule != nil {
+		return strings.TrimSpace(rule.Media)
+	}
+	return ""
+}
+
 func effectiveSizesAttr(conf *transformConfig, keyPath string, captures [][]byte) string {
 	attrs := append(append([]byte{}, captures[1]...), captures[3]...)
 	if match := sizesAttrValueRegex.FindSubmatch(attrs); len(match) > 1 {
@@ -125,6 +135,29 @@ func effectiveMaxDPR(conf *transformConfig, captures [][]byte) (float64, error) 
 		return 0, fmt.Errorf("invalid data-enfasten-max-dpr value %q: %w", value, err)
 	}
 	return maxDPR, nil
+}
+
+func effectiveMediaAttr(conf *transformConfig, keyPath string, captures [][]byte) (string, error) {
+	matches := mediaAttrRegex.FindAllSubmatch(sourceAttributes(captures), -1)
+	if len(matches) == 0 {
+		return conf.mediaAttrForImage(keyPath), nil
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("an img may only specify data-enfasten-media once")
+	}
+
+	value := string(matches[0][1])
+	if value == "" {
+		value = string(matches[0][2])
+	}
+	value = strings.TrimSpace(value)
+	if strings.EqualFold(value, "none") {
+		return "", nil
+	}
+	if value == "" {
+		return "", fmt.Errorf("data-enfasten-media may not be empty; use %q to disable a rule", "none")
+	}
+	return value, nil
 }
 
 type sourceSize struct {
@@ -251,10 +284,15 @@ func maxDPRSizes(sizes string, maxDPR float64) (string, error) {
 
 func rewriteBuildAttributes(attrs []byte, sourceHadSizes bool, sizes string) []byte {
 	rewritten := maxDPRAttrRegex.ReplaceAll(attrs, nil)
+	rewritten = mediaAttrRegex.ReplaceAll(rewritten, nil)
 	if sourceHadSizes {
 		rewritten = sizesAttrValueRegex.ReplaceAll(rewritten, []byte(` sizes="`+sizes+`"`))
 	}
 	return rewritten
+}
+
+func removeSizesAttribute(attrs []byte) []byte {
+	return sizesAttrValueRegex.ReplaceAll(attrs, nil)
 }
 
 func writeSrcset(buf *bytes.Buffer, conf *transformConfig, files []builtImageFile) {
@@ -290,6 +328,35 @@ func writeDimensionAttribute(buf *bytes.Buffer, name string, value string) {
 	buf.WriteString(`"`)
 }
 
+func writePictureSource(buf *bytes.Buffer, conf *transformConfig, imageType string, media string, files []builtImageFile, sizes string, width string, hasWidth bool, height string, hasHeight bool) {
+	buf.WriteString(`<source`)
+	if imageType != "" {
+		buf.WriteString(` type="`)
+		buf.WriteString(imageType)
+		buf.WriteString(`"`)
+	}
+	if media != "" {
+		buf.WriteString(` media="`)
+		buf.WriteString(html.EscapeString(media))
+		buf.WriteString(`"`)
+	}
+	buf.WriteString(` srcset="`)
+	writeSrcset(buf, conf, files)
+	buf.WriteString(`"`)
+	if sizes != "" {
+		buf.WriteString(` sizes="`)
+		buf.WriteString(sizes)
+		buf.WriteString(`"`)
+	}
+	if hasWidth {
+		writeDimensionAttribute(buf, "width", width)
+	}
+	if hasHeight {
+		writeDimensionAttribute(buf, "height", height)
+	}
+	buf.WriteString(`>`)
+}
+
 func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []byte {
 	keyPath := findImagePath(conf.config, relPath, string(captures[2]))
 	slug, ok := conf.pathToSlug[keyPath]
@@ -298,6 +365,11 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 	}
 	built := conf.manifest[slug]
 	sizesAttr := effectiveSizesAttr(conf, keyPath, captures)
+	mediaAttr, err := effectiveMediaAttr(conf, keyPath, captures)
+	if err != nil {
+		log.Printf("Invalid media gate for %s: %v", keyPath, err)
+		return captures[0]
+	}
 	maxDPR, err := effectiveMaxDPR(conf, captures)
 	if err != nil {
 		log.Printf("Invalid max DPR for %s: %v", keyPath, err)
@@ -311,6 +383,13 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 	sourceHadSizes := sizesAttrRegex.Match(captures[1]) || sizesAttrRegex.Match(captures[3])
 	beforeSrc := rewriteBuildAttributes(captures[1], sourceHadSizes, sizesAttr)
 	afterSrc := rewriteBuildAttributes(captures[3], sourceHadSizes, sizesAttr)
+	if mediaAttr != "" {
+		// The responsive sizes belong on the gated source elements. Keeping
+		// sizes on the transparent img fallback would be misleading and invalid
+		// because that fallback intentionally has no srcset.
+		beforeSrc = removeSizesAttribute(beforeSrc)
+		afterSrc = removeSizesAttribute(afterSrc)
+	}
 	attrs := append(append([]byte{}, beforeSrc...), afterSrc...)
 	hasSourceWidth := widthAttrRegex.Match(attrs)
 	hasSourceHeight := heightAttrRegex.Match(attrs)
@@ -324,32 +403,33 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 	}
 
 	var buf bytes.Buffer
+	usesPicture := len(built.WebPFiles) > 0 || mediaAttr != ""
+	if usesPicture {
+		buf.WriteString(`<picture>`)
+	}
 	if len(built.WebPFiles) > 0 {
-		buf.WriteString(`<picture><source type="image/webp" srcset="`)
-		writeSrcset(&buf, conf, built.WebPFiles)
-		buf.WriteString(`"`)
-		if sizesAttr != "" {
-			buf.WriteString(` sizes="`)
-			buf.WriteString(sizesAttr)
-			buf.WriteString(`"`)
-		}
-		if hasSourceWidthValue {
-			writeDimensionAttribute(&buf, "width", sourceWidth)
-		}
-		if hasSourceHeightValue {
-			writeDimensionAttribute(&buf, "height", sourceHeight)
-		}
-		buf.WriteString(`>`)
+		writePictureSource(&buf, conf, "image/webp", mediaAttr, built.WebPFiles, sizesAttr, sourceWidth, hasSourceWidthValue, sourceHeight, hasSourceHeightValue)
+	}
+	if mediaAttr != "" {
+		// A second gated source preserves the original-format fallback for
+		// browsers that cannot decode the preferred modern format. The img's
+		// transparent data URL is selected only when the media query is false,
+		// so a CSS-hidden alternative causes no network request.
+		writePictureSource(&buf, conf, "", mediaAttr, built.Files, sizesAttr, sourceWidth, hasSourceWidthValue, sourceHeight, hasSourceHeightValue)
 	}
 
 	buf.WriteString("<img ")
 	buf.Write(beforeSrc)
 	buf.WriteString(`src="`)
-	buf.WriteString(nameToImagePath(conf.config, built.OriginalName))
+	if mediaAttr != "" {
+		buf.WriteString(transparentImage)
+	} else {
+		buf.WriteString(nameToImagePath(conf.config, built.OriginalName))
+	}
 	buf.WriteString(`"`)
 
 	// if there's only one image no point in it being responsive
-	if len(built.Files) > 1 {
+	if mediaAttr == "" && len(built.Files) > 1 {
 		buf.WriteString(` srcset="`)
 		writeSrcset(&buf, conf, built.Files)
 		buf.WriteString(`"`)
@@ -359,7 +439,7 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 			buf.WriteString(`"`)
 		}
 	}
-	if len(built.WebPFiles) > 0 && !hasSourceWidth && !hasSourceHeight && built.Width > 0 && built.Height > 0 {
+	if usesPicture && !hasSourceWidth && !hasSourceHeight && built.Width > 0 && built.Height > 0 {
 		buf.WriteString(` width="`)
 		buf.WriteString(strconv.Itoa(built.Width))
 		buf.WriteString(`" height="`)
@@ -369,7 +449,7 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 
 	buf.Write(afterSrc)
 	buf.WriteString(`>`)
-	if len(built.WebPFiles) > 0 {
+	if usesPicture {
 		buf.WriteString(`</picture>`)
 	}
 

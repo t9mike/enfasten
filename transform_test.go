@@ -72,6 +72,68 @@ func TestRebuildImageUsesWebPPictureAndIntrinsicDimensions(t *testing.T) {
 	}
 }
 
+func TestRebuildImageMediaGatesModernAndFallbackSources(t *testing.T) {
+	conf := exampleTransformConfig()
+	conf.SizesRules = []sizesRule{
+		{
+			Pattern: "**/images/example.png",
+			Sizes:   "90vw",
+			Media:   "(max-width: 40em)",
+			WebP:    true,
+		},
+	}
+	built := conf.manifest["example"]
+	built.Width = 1000
+	built.Height = 600
+	built.WebPFiles = []builtImageFile{
+		{FileName: "example-a1b2c3d4-original.webp", Width: 1000, Height: 600},
+		{FileName: "example-a1b2c3d4-500px.webp", Width: 500, Height: 300},
+	}
+	conf.manifest["example"] = built
+
+	match := []byte(`<img alt="Example" loading="lazy" src="images/example.png">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<picture><source type="image/webp" media="(max-width: 40em)" srcset="/assets/eimages/example-a1b2c3d4-original.webp 1000w, /assets/eimages/example-a1b2c3d4-500px.webp 500w" sizes="90vw" width="1000" height="600"><source media="(max-width: 40em)" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="90vw" width="1000" height="600"><img alt="Example" loading="lazy" src="` + transparentImage + `" width="1000" height="600"></picture>`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
+func TestRebuildImageUsesAndStripsPerImageMediaGate(t *testing.T) {
+	conf := exampleTransformConfig()
+	built := conf.manifest["example"]
+	built.Width = 1000
+	built.Height = 600
+	conf.manifest["example"] = built
+
+	match := []byte(`<img alt="Example" data-enfasten-media="(min-width: 40em)" sizes="50vw" src="images/example.png">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<picture><source media="(min-width: 40em)" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="50vw" width="1000" height="600"><img alt="Example" src="` + transparentImage + `" width="1000" height="600"></picture>`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "data-enfasten-media") {
+		t.Fatalf("build-only media attribute leaked into output: %q", got)
+	}
+}
+
+func TestRebuildImageCanDisableRuleMediaGate(t *testing.T) {
+	conf := exampleTransformConfig()
+	conf.SizesRules = []sizesRule{
+		{Pattern: "**/images/example.png", Media: "(max-width: 40em)"},
+	}
+
+	match := []byte(`<img alt="Example" data-enfasten-media="none" src="images/example.png">`)
+	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w">`
+
+	if got != want {
+		t.Fatalf("rebuildImage() = %q, want %q", got, want)
+	}
+}
+
 func TestRebuildImageCopiesAuthoredDimensionsToWebPSource(t *testing.T) {
 	conf := exampleTransformConfig()
 	conf.SizesRules = []sizesRule{

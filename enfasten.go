@@ -48,8 +48,12 @@ type config struct {
 type sizesRule struct {
 	Pattern string
 	Sizes   string
-	Widths  []int
-	WebP    bool
+	// Optional media query that gates whether the real image candidates are
+	// eligible at all. This is distinct from Sizes, which only influences which
+	// candidate the browser chooses after it has decided to load an image.
+	Media  string
+	Widths []int
+	WebP   bool
 }
 
 func (conf *config) ImageFolderPath() string {
