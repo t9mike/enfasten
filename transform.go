@@ -28,6 +28,7 @@ var widthAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)width\s*=`)
 var heightAttrRegex = regexp.MustCompile(`(?i)(?:^|\s)height\s*=`)
 var widthAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)width\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))`)
 var heightAttrValueRegex = regexp.MustCompile(`(?i)(?:^|\s)height\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))`)
+var includeDirectiveRegex = regexp.MustCompile(`(?m)<!--[\t ]*include[\t ]+(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s"'<>]+))[\t ]*-->`)
 
 const highestAdjustedDPR = 4.0
 const adjustedDPRStep = 0.5
@@ -462,6 +463,10 @@ func translateHtml(conf *transformConfig, inPath string, outPath string) (err er
 	if err != nil {
 		return err
 	}
+	bytes, err = expandIncludes(conf.config, inPath, bytes, nil)
+	if err != nil {
+		return err
+	}
 
 	// set up for HTML relative paths
 	inputPath := path.Join(conf.basePath, conf.InputFolder)
@@ -481,6 +486,120 @@ func translateHtml(conf *transformConfig, inPath string, outPath string) (err er
 	})
 
 	return writeFileIfChanged(outPath, newBytes)
+}
+
+func includeName(contents []byte, captures []int) string {
+	for captureIndex := 2; captureIndex < len(captures); captureIndex += 2 {
+		if captures[captureIndex] >= 0 {
+			return string(contents[captures[captureIndex]:captures[captureIndex+1]])
+		}
+	}
+	return ""
+}
+
+func normalizeIncludeName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || path.Clean(name) != name || path.IsAbs(name) || name == "." || name == ".." || strings.HasPrefix(name, "../") {
+		return "", fmt.Errorf("invalid include path %q", name)
+	}
+	return name, nil
+}
+
+func includeDisplayPath(conf *config, filePath string) string {
+	relPath, err := filepath.Rel(conf.InputFolderPath(), filePath)
+	if err != nil {
+		return filePath
+	}
+	return filepath.ToSlash(relPath)
+}
+
+func standaloneIncludeLine(contents []byte, start int, end int) (lineStart int, lineEnd int, ok bool) {
+	lineStart = bytes.LastIndex(contents[:start], []byte("\n")) + 1
+	if len(bytes.TrimSpace(contents[lineStart:start])) != 0 {
+		return 0, 0, false
+	}
+	lineEnd = end
+	for lineEnd < len(contents) && contents[lineEnd] != '\n' {
+		lineEnd++
+	}
+	if len(bytes.TrimSpace(contents[end:lineEnd])) != 0 {
+		return 0, 0, false
+	}
+	return lineStart, lineEnd, true
+}
+
+func indentIncludedContent(contents []byte, indentation []byte) []byte {
+	if len(contents) == 0 || len(indentation) == 0 {
+		return contents
+	}
+	var indented bytes.Buffer
+	indented.Write(indentation)
+	for index, value := range contents {
+		indented.WriteByte(value)
+		if value == '\n' && index+1 < len(contents) && contents[index+1] != '\n' {
+			indented.Write(indentation)
+		}
+	}
+	return indented.Bytes()
+}
+
+func expandIncludes(conf *config, sourcePath string, contents []byte, stack []string) ([]byte, error) {
+	matches := includeDirectiveRegex.FindAllSubmatchIndex(contents, -1)
+	if len(matches) == 0 {
+		return contents, nil
+	}
+	if conf.IncludeFolder == "" {
+		return nil, fmt.Errorf("%s uses an include directive but includefolder is not configured", includeDisplayPath(conf, sourcePath))
+	}
+
+	var expanded bytes.Buffer
+	lastIndex := 0
+	for _, captures := range matches {
+		matchStart := captures[0]
+		nextIndex := captures[1]
+		indentation := []byte(nil)
+		if lineStart, lineEnd, standalone := standaloneIncludeLine(contents, captures[0], captures[1]); standalone {
+			matchStart = lineStart
+			indentation = contents[lineStart:captures[0]]
+			if lineEnd < len(contents) {
+				nextIndex = lineEnd + 1
+			} else {
+				nextIndex = lineEnd
+			}
+		}
+		expanded.Write(contents[lastIndex:matchStart])
+		name, err := normalizeIncludeName(includeName(contents, captures))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", includeDisplayPath(conf, sourcePath), err)
+		}
+
+		includePath := path.Join(conf.IncludeFolderPath(), name)
+		for _, ancestor := range stack {
+			if ancestor == includePath {
+				chain := append(append([]string{}, stack...), includePath)
+				for index := range chain {
+					chain[index] = includeDisplayPath(conf, chain[index])
+				}
+				return nil, fmt.Errorf("include cycle: %s", strings.Join(chain, " -> "))
+			}
+		}
+
+		included, err := readFileBytes(includePath)
+		if err != nil {
+			return nil, fmt.Errorf("%s includes %s: %w", includeDisplayPath(conf, sourcePath), includeDisplayPath(conf, includePath), err)
+		}
+		included, err = expandIncludes(conf, includePath, included, append(stack, includePath))
+		if err != nil {
+			return nil, err
+		}
+		expanded.Write(indentIncludedContent(included, indentation))
+		if len(included) == 0 || included[len(included)-1] != '\n' {
+			nextIndex = captures[1]
+		}
+		lastIndex = nextIndex
+	}
+	expanded.Write(contents[lastIndex:])
+	return expanded.Bytes(), nil
 }
 
 // isBlacklisted reports whether file (an absolute-or-relative path under the
@@ -527,14 +646,18 @@ func transferAndTransform(conf *transformConfig, whitelist *[]string, file strin
 
 func transferAndTransformAll(conf *transformConfig) (whitelist []string, err error) {
 	whitelist = []string{}
-	walkFunk := func(path string, info os.FileInfo, err error) error {
+	includePath := conf.IncludeFolderPath()
+	walkFunk := func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		if includePath != "" && filePath == includePath && info.IsDir() {
+			return filepath.SkipDir
 		}
 		if info.IsDir() {
 			return nil
 		}
-		return transferAndTransform(conf, &whitelist, path)
+		return transferAndTransform(conf, &whitelist, filePath)
 	}
 	inputPath := path.Join(conf.basePath, conf.InputFolder)
 	if conf.languageFilter != "" {

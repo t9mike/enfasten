@@ -104,6 +104,21 @@ func TestNormalizeLanguageFilter(t *testing.T) {
 	}
 }
 
+func TestNormalizeIncludeFolder(t *testing.T) {
+	for _, folder := range []string{"includes", "fr/includes"} {
+		got, err := normalizeIncludeFolder(folder)
+		if err != nil || got != folder {
+			t.Fatalf("normalizeIncludeFolder(%q) = %q, %v", folder, got, err)
+		}
+	}
+
+	for _, folder := range []string{".", "..", "../includes", "/includes", "includes/"} {
+		if _, err := normalizeIncludeFolder(folder); err == nil {
+			t.Fatalf("normalizeIncludeFolder(%q) should fail", folder)
+		}
+	}
+}
+
 func TestDeleteNonWhitelistUnderPreservesOtherLocales(t *testing.T) {
 	basePath := t.TempDir()
 	conf := &config{basePath: basePath, OutputFolder: "fastsite"}

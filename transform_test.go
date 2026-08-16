@@ -1,9 +1,153 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestExpandIncludesRecursively(t *testing.T) {
+	basePath := t.TempDir()
+	includePath := filepath.Join(basePath, "site", "includes")
+	if err := os.MkdirAll(includePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(includePath, "outer.html"), []byte("before <!-- include inner.html --> after"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(includePath, "inner.html"), []byte("inside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conf := &config{basePath: basePath, InputFolder: "site", IncludeFolder: "includes"}
+	got, err := expandIncludes(conf, filepath.Join(basePath, "site", "en", "index.html"), []byte(`start <!-- include "outer.html" --> end`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "start before inside after end"; string(got) != want {
+		t.Fatalf("expandIncludes() = %q, want %q", got, want)
+	}
+}
+
+func TestExpandIncludesIndentsStandaloneFragments(t *testing.T) {
+	basePath := t.TempDir()
+	includePath := filepath.Join(basePath, "site", "includes")
+	if err := os.MkdirAll(includePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fragment := "<script>\n\n    example();\n</script>\n"
+	if err := os.WriteFile(filepath.Join(includePath, "script.html"), []byte(fragment), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conf := &config{basePath: basePath, InputFolder: "site", IncludeFolder: "includes"}
+	contents := []byte("<head>\n    <!-- include script.html -->\n    <title>Example</title>\n</head>\n")
+	got, err := expandIncludes(conf, filepath.Join(basePath, "site", "en", "index.html"), contents, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<head>\n    <script>\n\n        example();\n    </script>\n    <title>Example</title>\n</head>\n"
+	if string(got) != want {
+		t.Fatalf("expandIncludes() = %q, want %q", got, want)
+	}
+}
+
+func TestExpandIncludesRejectsMissingTraversalAndCycles(t *testing.T) {
+	basePath := t.TempDir()
+	includePath := filepath.Join(basePath, "site", "includes")
+	if err := os.MkdirAll(includePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(includePath, "cycle.html"), []byte("<!-- include cycle.html -->"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conf := &config{basePath: basePath, InputFolder: "site", IncludeFolder: "includes"}
+	tests := []struct {
+		contents string
+		want     string
+	}{
+		{contents: "<!-- include missing.html -->", want: "missing.html"},
+		{contents: "<!-- include ../secret.html -->", want: "invalid include path"},
+		{contents: "<!-- include cycle.html -->", want: "include cycle"},
+	}
+	for _, test := range tests {
+		_, err := expandIncludes(conf, filepath.Join(basePath, "site", "en", "index.html"), []byte(test.contents), nil)
+		if err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("expandIncludes(%q) error = %v, want containing %q", test.contents, err, test.want)
+		}
+	}
+}
+
+func TestTransferAndTransformAllDoesNotPublishIncludes(t *testing.T) {
+	basePath := t.TempDir()
+	includePath := filepath.Join(basePath, "site", "includes")
+	pagePath := filepath.Join(basePath, "site", "en", "index.html")
+	for _, dirPath := range []string{includePath, filepath.Dir(pagePath)} {
+		if err := os.MkdirAll(dirPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(includePath, "head.html"), []byte("<meta name=example>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pagePath, []byte("<head><!-- include head.html --></head>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conf := &transformConfig{
+		config:     &config{basePath: basePath, InputFolder: "site", OutputFolder: "fastsite", IncludeFolder: "includes"},
+		manifest:   map[string]builtImage{},
+		pathToSlug: map[string]string{},
+	}
+	if _, err := transferAndTransformAll(conf); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(filepath.Join(basePath, "fastsite", "en", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "<head><meta name=example></head>" {
+		t.Fatalf("transformed page = %q", contents)
+	}
+	if _, err := os.Stat(filepath.Join(basePath, "fastsite", "includes")); !os.IsNotExist(err) {
+		t.Fatalf("include folder was published: %v", err)
+	}
+}
+
+func TestTranslateHtmlTransformsImagesFromIncludes(t *testing.T) {
+	basePath := t.TempDir()
+	includePath := filepath.Join(basePath, "site", "includes")
+	pagePath := filepath.Join(basePath, "site", "en", "index.html")
+	outputPath := filepath.Join(basePath, "fastsite", "en", "index.html")
+	for _, dirPath := range []string{includePath, filepath.Dir(pagePath), filepath.Dir(outputPath)} {
+		if err := os.MkdirAll(dirPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(includePath, "image.html"), []byte(`<img alt="Example" src="images/example.png">`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pagePath, []byte("<!-- include image.html -->"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conf := exampleTransformConfig()
+	conf.basePath = basePath
+	conf.InputFolder = "site"
+	conf.IncludeFolder = "includes"
+	if err := translateHtml(conf, pagePath, outputPath); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), `/assets/eimages/example-a1b2c3d4-original.png`) {
+		t.Fatalf("included image was not transformed: %s", contents)
+	}
+}
 
 func TestRebuildImageClosesSrcsetQuote(t *testing.T) {
 	conf := &transformConfig{

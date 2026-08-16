@@ -17,12 +17,15 @@ import (
 type config struct {
 	InputFolder  string
 	OutputFolder string
-	ImageFolder  string
-	ManifestFile string
-	SizesAttr    string
-	MaxDPR       float64
-	SizesRules   []sizesRule
-	OptimCommand []string
+	// Source fragments referenced by HTML include directives. The folder is
+	// relative to InputFolder and is never copied into OutputFolder.
+	IncludeFolder string
+	ImageFolder   string
+	ManifestFile  string
+	SizesAttr     string
+	MaxDPR        float64
+	SizesRules    []sizesRule
+	OptimCommand  []string
 	// Maximum number of image paths appended to each OptimCommand invocation.
 	// Zero keeps the historical single-command behavior.
 	OptimBatchSize int
@@ -62,6 +65,13 @@ func (conf *config) ImageFolderPath() string {
 
 func (conf *config) InputFolderPath() string {
 	return path.Join(conf.basePath, conf.InputFolder)
+}
+
+func (conf *config) IncludeFolderPath() string {
+	if conf.IncludeFolder == "" {
+		return ""
+	}
+	return path.Join(conf.InputFolderPath(), conf.IncludeFolder)
 }
 
 func copyFile(source string, dest string) error {
@@ -155,6 +165,17 @@ func normalizeLanguageFilter(languageFilter string) (string, error) {
 	return languageFilter, nil
 }
 
+func normalizeIncludeFolder(includeFolder string) (string, error) {
+	includeFolder = strings.TrimSpace(includeFolder)
+	if includeFolder == "" {
+		return "", nil
+	}
+	if path.Clean(includeFolder) != includeFolder || path.IsAbs(includeFolder) || includeFolder == "." || includeFolder == ".." || strings.HasPrefix(includeFolder, "../") {
+		return "", fmt.Errorf("invalid include folder %q", includeFolder)
+	}
+	return includeFolder, nil
+}
+
 func buildFastSite(basePath string, doCulling bool, languageFilter string) (err error) {
 	conf, err := readConfig(basePath)
 	if err != nil {
@@ -169,6 +190,19 @@ func buildFastSite(basePath string, doCulling bool, languageFilter string) (err 
 	conf.basePath = basePath
 	conf.doCulling = doCulling
 	conf.languageFilter = languageFilter
+	conf.IncludeFolder, err = normalizeIncludeFolder(conf.IncludeFolder)
+	if err != nil {
+		return
+	}
+	if conf.IncludeFolder != "" {
+		includeInfo, statErr := os.Stat(conf.IncludeFolderPath())
+		if statErr != nil {
+			return fmt.Errorf("include folder: %w", statErr)
+		}
+		if !includeInfo.IsDir() {
+			return fmt.Errorf("include folder is not a directory: %s", conf.IncludeFolderPath())
+		}
+	}
 	if err = validateMaxDPR(conf.MaxDPR); err != nil {
 		return
 	}
