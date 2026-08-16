@@ -513,6 +513,57 @@ func includeDisplayPath(conf *config, filePath string) string {
 	return filepath.ToSlash(relPath)
 }
 
+// resolveIncludePath searches for the configured include folder beside the
+// source file and then beside each parent directory up to InputFolder. This
+// lets a locale provide its own fragments (for example en/includes/social.html)
+// while shared fragments continue to fall back to the root includes folder.
+func resolveIncludePath(conf *config, sourcePath string, name string) (string, error) {
+	inputRoot := filepath.Clean(conf.InputFolderPath())
+	cursor := filepath.Dir(sourcePath)
+	includeFolder := filepath.FromSlash(conf.IncludeFolder)
+	includeName := filepath.FromSlash(name)
+	lastCandidate := filepath.Join(inputRoot, includeFolder, includeName)
+
+	for {
+		relPath, err := filepath.Rel(inputRoot, cursor)
+		if err != nil || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("source path is outside input folder: %s", sourcePath)
+		}
+
+		candidate := filepath.Join(cursor, includeFolder, includeName)
+		lastCandidate = candidate
+		if _, err = os.Stat(candidate); err == nil {
+			return candidate, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+
+		if cursor == inputRoot {
+			break
+		}
+		parent := filepath.Dir(cursor)
+		if parent == cursor {
+			break
+		}
+		cursor = parent
+	}
+
+	// Let the existing read error identify the final shared fallback path.
+	return lastCandidate, nil
+}
+
+func (conf *config) isIncludeFolderPath(filePath string) bool {
+	if conf.IncludeFolder == "" {
+		return false
+	}
+	relPath, err := filepath.Rel(conf.InputFolderPath(), filePath)
+	if err != nil {
+		return false
+	}
+	relPath = filepath.ToSlash(relPath)
+	return relPath == conf.IncludeFolder || strings.HasSuffix(relPath, "/"+conf.IncludeFolder)
+}
+
 func standaloneIncludeLine(contents []byte, start int, end int) (lineStart int, lineEnd int, ok bool) {
 	lineStart = bytes.LastIndex(contents[:start], []byte("\n")) + 1
 	if len(bytes.TrimSpace(contents[lineStart:start])) != 0 {
@@ -573,7 +624,10 @@ func expandIncludes(conf *config, sourcePath string, contents []byte, stack []st
 			return nil, fmt.Errorf("%s: %w", includeDisplayPath(conf, sourcePath), err)
 		}
 
-		includePath := path.Join(conf.IncludeFolderPath(), name)
+		includePath, err := resolveIncludePath(conf, sourcePath, name)
+		if err != nil {
+			return nil, fmt.Errorf("%s includes %s: %w", includeDisplayPath(conf, sourcePath), name, err)
+		}
 		for _, ancestor := range stack {
 			if ancestor == includePath {
 				chain := append(append([]string{}, stack...), includePath)
@@ -646,12 +700,11 @@ func transferAndTransform(conf *transformConfig, whitelist *[]string, file strin
 
 func transferAndTransformAll(conf *transformConfig) (whitelist []string, err error) {
 	whitelist = []string{}
-	includePath := conf.IncludeFolderPath()
 	walkFunk := func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if includePath != "" && filePath == includePath && info.IsDir() {
+		if info.IsDir() && conf.isIncludeFolderPath(filePath) {
 			return filepath.SkipDir
 		}
 		if info.IsDir() {

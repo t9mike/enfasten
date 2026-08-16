@@ -30,6 +30,41 @@ func TestExpandIncludesRecursively(t *testing.T) {
 	}
 }
 
+func TestExpandIncludesUsesNearestFolderWithSharedFallback(t *testing.T) {
+	basePath := t.TempDir()
+	sharedIncludes := filepath.Join(basePath, "site", "includes")
+	localeIncludes := filepath.Join(basePath, "site", "fr", "includes")
+	pagePath := filepath.Join(basePath, "site", "fr", "tutorials", "index.html")
+	for _, dirPath := range []string{sharedIncludes, localeIncludes, filepath.Dir(pagePath)} {
+		if err := os.MkdirAll(dirPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(sharedIncludes, "social.html"), []byte("shared social"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localeIncludes, "social.html"), []byte("French social"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedIncludes, "scripts.html"), []byte("shared scripts"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conf := &config{basePath: basePath, InputFolder: "site", IncludeFolder: "includes"}
+	got, err := expandIncludes(
+		conf,
+		pagePath,
+		[]byte("<!-- include social.html --> / <!-- include scripts.html -->"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "French social / shared scripts"; string(got) != want {
+		t.Fatalf("expandIncludes() = %q, want %q", got, want)
+	}
+}
+
 func TestExpandIncludesIndentsStandaloneFragments(t *testing.T) {
 	basePath := t.TempDir()
 	includePath := filepath.Join(basePath, "site", "includes")
@@ -83,13 +118,17 @@ func TestExpandIncludesRejectsMissingTraversalAndCycles(t *testing.T) {
 func TestTransferAndTransformAllDoesNotPublishIncludes(t *testing.T) {
 	basePath := t.TempDir()
 	includePath := filepath.Join(basePath, "site", "includes")
+	localeIncludePath := filepath.Join(basePath, "site", "en", "includes")
 	pagePath := filepath.Join(basePath, "site", "en", "index.html")
-	for _, dirPath := range []string{includePath, filepath.Dir(pagePath)} {
+	for _, dirPath := range []string{includePath, localeIncludePath, filepath.Dir(pagePath)} {
 		if err := os.MkdirAll(dirPath, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(includePath, "head.html"), []byte("<meta name=example>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localeIncludePath, "social.html"), []byte("<meta name=social>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(pagePath, []byte("<head><!-- include head.html --></head>"), 0o644); err != nil {
@@ -113,6 +152,9 @@ func TestTransferAndTransformAllDoesNotPublishIncludes(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(basePath, "fastsite", "includes")); !os.IsNotExist(err) {
 		t.Fatalf("include folder was published: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(basePath, "fastsite", "en", "includes")); !os.IsNotExist(err) {
+		t.Fatalf("locale include folder was published: %v", err)
 	}
 }
 
