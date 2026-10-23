@@ -24,6 +24,7 @@ type config struct {
 	ManifestFile  string
 	SizesAttr     string
 	MaxDPR        float64
+	MaxWidth      int
 	SizesRules    []sizesRule
 	OptimCommand  []string
 	// Maximum number of image paths appended to each OptimCommand invocation.
@@ -46,6 +47,8 @@ type config struct {
 	basePath       string
 	doCulling      bool
 	languageFilter string
+	// Cap-sized variants needed by all source paths sharing an image slug.
+	requiredWidths map[int]bool
 }
 
 type sizesRule struct {
@@ -57,6 +60,8 @@ type sizesRule struct {
 	Media  string
 	Widths []int
 	WebP   bool
+	// Nil inherits the global cap; zero explicitly disables it.
+	MaxWidth *int
 }
 
 func (conf *config) ImageFolderPath() string {
@@ -136,6 +141,7 @@ func readConfig(basePath string) (conf config, err error) {
 		ManifestFile:   "enfasten_manifest.yml",
 		SizesAttr:      "",
 		MaxDPR:         0,
+		MaxWidth:       1980,
 		OptimCommand:   nil,
 		OptimBatchSize: 32,
 		DoCopy:         true,
@@ -206,6 +212,14 @@ func buildFastSite(basePath string, doCulling bool, languageFilter string) (err 
 	if err = validateMaxDPR(conf.MaxDPR); err != nil {
 		return
 	}
+	if conf.MaxWidth < 0 {
+		return fmt.Errorf("maxwidth must be zero (unlimited) or positive, got %d", conf.MaxWidth)
+	}
+	for _, rule := range conf.SizesRules {
+		if rule.MaxWidth != nil && *rule.MaxWidth < 0 {
+			return fmt.Errorf("maxwidth for %q must be zero (unlimited) or positive", rule.Pattern)
+		}
+	}
 	if conf.OptimBatchSize < 0 {
 		return fmt.Errorf("optimbatchsize must be zero or greater, got %d", conf.OptimBatchSize)
 	}
@@ -260,6 +274,9 @@ func buildFastSite(basePath string, doCulling bool, languageFilter string) (err 
 	// whitelist all our files
 	imageFolder := conf.ImageFolderPath()
 	for _, bImg := range newManifest {
+		// Full-resolution downloads survive even when excluded from page images
+		// or removed from responsive candidates by optional culling.
+		whitelist = append(whitelist, path.Join(imageFolder, bImg.OriginalName))
 		for _, bImgFile := range bImg.Files {
 			whitelist = append(whitelist, path.Join(imageFolder, bImgFile.FileName))
 		}

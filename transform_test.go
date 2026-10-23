@@ -212,7 +212,7 @@ func TestRebuildImageClosesSrcsetQuote(t *testing.T) {
 
 	match := []byte(`<img alt="Example" src="images/example.png">`)
 	captures := imgRegex.FindSubmatch(match)
-	got := string(rebuildImage(conf, ".", captures))
+	got := string(mustRebuildImage(t, conf, ".", captures))
 	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w">`
 
 	if got != want {
@@ -227,7 +227,7 @@ func TestRebuildImageUsesMatchingSizesRule(t *testing.T) {
 	}
 
 	match := []byte(`<img alt="Example" src="images/example.png">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="(min-width: 60em) 30em, 90vw">`
 
 	if got != want {
@@ -250,7 +250,7 @@ func TestRebuildImageUsesWebPPictureAndIntrinsicDimensions(t *testing.T) {
 	conf.manifest["example"] = built
 
 	match := []byte(`<img alt="Example" loading="lazy" src="images/example.png">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<picture><source type="image/webp" srcset="/assets/eimages/example-a1b2c3d4-original.webp 1000w, /assets/eimages/example-a1b2c3d4-500px.webp 500w" sizes="(min-width: 60em) 30em, 90vw" width="1000" height="600"><img alt="Example" loading="lazy" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="(min-width: 60em) 30em, 90vw" width="1000" height="600"></picture>`
 
 	if got != want {
@@ -278,7 +278,7 @@ func TestRebuildImageMediaGatesModernAndFallbackSources(t *testing.T) {
 	conf.manifest["example"] = built
 
 	match := []byte(`<img alt="Example" loading="lazy" src="images/example.png">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<picture><source type="image/webp" media="(max-width: 40em)" srcset="/assets/eimages/example-a1b2c3d4-original.webp 1000w, /assets/eimages/example-a1b2c3d4-500px.webp 500w" sizes="90vw" width="1000" height="600"><source media="(max-width: 40em)" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="90vw" width="1000" height="600"><img alt="Example" loading="lazy" src="` + transparentImage + `" width="1000" height="600"></picture>`
 
 	if got != want {
@@ -294,7 +294,7 @@ func TestRebuildImageUsesAndStripsPerImageMediaGate(t *testing.T) {
 	conf.manifest["example"] = built
 
 	match := []byte(`<img alt="Example" data-enfasten-media="(min-width: 40em)" sizes="50vw" src="images/example.png">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<picture><source media="(min-width: 40em)" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="50vw" width="1000" height="600"><img alt="Example" src="` + transparentImage + `" width="1000" height="600"></picture>`
 
 	if got != want {
@@ -312,7 +312,7 @@ func TestRebuildImageCanDisableRuleMediaGate(t *testing.T) {
 	}
 
 	match := []byte(`<img alt="Example" data-enfasten-media="none" src="images/example.png">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w">`
 
 	if got != want {
@@ -335,7 +335,7 @@ func TestRebuildImageCopiesAuthoredDimensionsToWebPSource(t *testing.T) {
 	conf.manifest["example"] = built
 
 	match := []byte(`<img alt="Example" width='250' src="images/example.png" height=150>`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<picture><source type="image/webp" srcset="/assets/eimages/example-a1b2c3d4-original.webp 1000w, /assets/eimages/example-a1b2c3d4-500px.webp 500w" width="250" height="150"><img alt="Example" width='250' src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" height=150></picture>`
 
 	if got != want {
@@ -351,7 +351,7 @@ func TestRebuildImageKeepsSourceDimensions(t *testing.T) {
 	conf.manifest["example"] = built
 
 	match := []byte(`<img alt="Example" src="images/example.png" width="250" height="150">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" width="250" height="150">`
 
 	if got != want {
@@ -367,7 +367,7 @@ func TestRebuildImageDoesNotAddDimensionsWithoutModernSource(t *testing.T) {
 	conf.manifest["example"] = built
 
 	match := []byte(`<img alt="Example" src="images/example.png">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w">`
 
 	if got != want {
@@ -383,7 +383,7 @@ func TestRebuildImageDoesNotMixSourceAndGeneratedDimensions(t *testing.T) {
 	conf.manifest["example"] = built
 
 	match := []byte(`<img alt="Example" src="images/example.png" width="250">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" width="250">`
 
 	if got != want {
@@ -398,7 +398,7 @@ func TestRebuildImageKeepsSourceSizesInsteadOfAddingRule(t *testing.T) {
 	}
 
 	match := []byte(`<img alt="Example" src="images/example.png" sizes="50vw">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	want := `<img alt="Example" src="/assets/eimages/example-a1b2c3d4-original.png" srcset="/assets/eimages/example-a1b2c3d4-original.png 1000w, /assets/eimages/example-a1b2c3d4-500px.png 500w" sizes="50vw">`
 
 	if got != want {
@@ -433,7 +433,7 @@ func TestRebuildImageUsesGlobalMaxDPR(t *testing.T) {
 	}
 
 	match := []byte(`<img alt="Example" src="images/example.png">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	if !strings.Contains(got, `(min-resolution: 2.75dppx) calc((90vw) * 0.6667)`) {
 		t.Fatalf("global maxdpr was not applied: %q", got)
 	}
@@ -447,7 +447,7 @@ func TestRebuildImageUsesAndStripsPerImageMaxDPROverride(t *testing.T) {
 	conf.MaxDPR = 3
 
 	match := []byte(`<img alt="Example" data-enfasten-max-dpr="2" sizes="90vw" src="images/example.png">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	if strings.Contains(got, "data-enfasten-max-dpr") {
 		t.Fatalf("build-only max DPR attribute leaked into output: %q", got)
 	}
@@ -464,13 +464,13 @@ func TestRebuildImageCanRaiseOrDisableGlobalMaxDPR(t *testing.T) {
 	conf.MaxDPR = 2
 
 	match := []byte(`<img alt="Example" data-enfasten-max-dpr="3" sizes="90vw" src="images/example.png">`)
-	got := string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got := string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	if strings.Contains(got, "2.75dppx") || !strings.Contains(got, "3.25dppx") {
 		t.Fatalf("per-image max DPR 3 did not replace global max DPR 2: %q", got)
 	}
 
 	match = []byte(`<img alt="Example" data-enfasten-max-dpr="none" sizes="90vw" src="images/example.png">`)
-	got = string(rebuildImage(conf, "en", imgRegex.FindSubmatch(match)))
+	got = string(mustRebuildImage(t, conf, "en", imgRegex.FindSubmatch(match)))
 	if strings.Contains(got, "min-resolution") || strings.Contains(got, "data-enfasten-max-dpr") {
 		t.Fatalf("per-image max DPR none did not disable and strip the directive: %q", got)
 	}
@@ -534,4 +534,13 @@ func exampleTransformConfig() *transformConfig {
 			"en/images/example.png": "example",
 		},
 	}
+}
+
+func mustRebuildImage(t *testing.T, conf *transformConfig, relPath string, captures [][]byte) []byte {
+	t.Helper()
+	result, err := rebuildImage(conf, relPath, captures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }

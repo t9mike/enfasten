@@ -214,6 +214,12 @@ func (conf *config) widthsForImage(imagePath string) []int {
 	for _, width := range conf.Widths {
 		widthSet[width] = true
 	}
+	for width := range conf.requiredWidths {
+		widthSet[width] = true
+	}
+	if maxWidth := conf.maxWidthForPath(imagePath); maxWidth > 0 {
+		widthSet[maxWidth] = true
+	}
 
 	relPath, err := filepath.Rel(conf.InputFolderPath(), imagePath)
 	if err == nil {
@@ -240,15 +246,26 @@ func configuredScaledWidths(conf *config, imagePath string, sourceWidth int) []i
 			continue
 		}
 		downscaleRatio := float64(width) / float64(sourceWidth)
-		if downscaleRatio > conf.ScaleThreshold {
+		// Always provide the cap itself, including images just above the cap
+		// that the ordinary PNG/JPEG resize thresholds would otherwise skip.
+		required := width == conf.maxWidthForPath(imagePath) || conf.requiredWidths[width]
+		if !required && downscaleRatio > conf.ScaleThreshold {
 			continue
 		}
-		if downscaleRatio > conf.JpgScaleThreshold && extension == ".jpg" {
+		if !required && downscaleRatio > conf.JpgScaleThreshold && extension == ".jpg" {
 			continue
 		}
 		widths = append(widths, width)
 	}
 	return widths
+}
+
+func (conf *config) maxWidthForPath(imagePath string) int {
+	relPath, err := filepath.Rel(conf.InputFolderPath(), imagePath)
+	if err != nil {
+		return conf.MaxWidth
+	}
+	return conf.maxWidthForImage(filepath.ToSlash(relPath))
 }
 
 func manifestHasConfiguredWidths(conf *config, imagePath string, built builtImage) bool {
@@ -538,7 +555,12 @@ func cullImageFiles(conf *config, files []builtImageFile) []builtImageFile {
 			log.Printf("Couldn't stat %s, removing from manifest", builtFile.FileName)
 			continue // file doesn't exist, shouldn't be in manifest
 		}
-		if info.Size() < bestSize {
+		// A larger file outside a page's cap cannot replace its cap-sized
+		// candidate, even when that larger file compresses to fewer bytes.
+		if conf.requiredWidths[builtFile.Width] {
+			bestSize = info.Size()
+			newFiles = append(newFiles, builtFile)
+		} else if info.Size() < bestSize {
 			bestSize = info.Size()
 			newFiles = append(newFiles, builtFile)
 		} else {
@@ -559,25 +581,39 @@ func buildNewManifest(conf *config, foundImages []foundImage, oldManifest map[st
 	pathToSlug = map[string]string{}
 	newImages := []string{}
 	inputPath := path.Join(conf.basePath, conf.InputFolder)
+	// Identical images can be used under different rules (for example, in
+	// multiple locales). Generate every required cap before sharing the entry.
+	slugWidths := map[string]map[int]bool{}
 	for _, img := range foundImages {
 		slug := getSlug(img.Path, img.Hash)
+		if slugWidths[slug] == nil {
+			slugWidths[slug] = map[int]bool{}
+		}
+		if maxWidth := conf.maxWidthForPath(img.Path); maxWidth > 0 {
+			slugWidths[slug][maxWidth] = true
+		}
+	}
+	for _, img := range foundImages {
+		slug := getSlug(img.Path, img.Hash)
+		imageConf := *conf
+		imageConf.requiredWidths = slugWidths[slug]
 		if built, ok := newManifest[slug]; ok {
 			// Identical files in multiple locales share a slug. Never let a
 			// deferred locale overwrite WebP work already completed for the
 			// selected locale, but allow the selected locale to upgrade an entry
 			// first encountered outside the filter.
-			if shouldRebuildDuplicate(conf, img.Path, built) {
-				built, err = buildImage(conf, img.Path, slug, &newImages)
+			if shouldRebuildDuplicate(&imageConf, img.Path, built) {
+				built, err = buildImage(&imageConf, img.Path, slug, &newImages)
 				if err != nil {
 					return
 				}
 				newManifest[slug] = built
 			}
-		} else if built, ok := oldManifest[slug]; ok && manifestHasConfiguredWidths(conf, img.Path, built) {
-			newManifest[slug] = cullImages(conf, built)
+		} else if built, ok := oldManifest[slug]; ok && manifestHasConfiguredWidths(&imageConf, img.Path, built) {
+			newManifest[slug] = cullImages(&imageConf, built)
 		} else {
 			var built builtImage
-			built, err = buildImage(conf, img.Path, slug, &newImages)
+			built, err = buildImage(&imageConf, img.Path, slug, &newImages)
 			if err != nil {
 				return
 			}

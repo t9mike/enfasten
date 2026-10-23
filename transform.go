@@ -82,6 +82,23 @@ func (conf *config) sizesAttrForImage(relPath string) string {
 	return conf.SizesAttr
 }
 
+func (conf *config) maxWidthForImage(relPath string) int {
+	if rule := conf.responsiveRuleForImage(relPath); rule != nil && rule.MaxWidth != nil {
+		return *rule.MaxWidth
+	}
+	return conf.MaxWidth
+}
+
+func cappedImageFiles(files []builtImageFile, maxWidth int) []builtImageFile {
+	var candidates []builtImageFile
+	for _, file := range files {
+		if maxWidth == 0 || file.Width <= maxWidth {
+			candidates = append(candidates, file)
+		}
+	}
+	return candidates
+}
+
 func (conf *config) mediaAttrForImage(relPath string) string {
 	if rule := conf.responsiveRuleForImage(relPath); rule != nil {
 		return strings.TrimSpace(rule.Media)
@@ -358,28 +375,33 @@ func writePictureSource(buf *bytes.Buffer, conf *transformConfig, imageType stri
 	buf.WriteString(`>`)
 }
 
-func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []byte {
+func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) ([]byte, error) {
 	keyPath := findImagePath(conf.config, relPath, string(captures[2]))
 	slug, ok := conf.pathToSlug[keyPath]
 	if !ok {
-		return captures[0]
+		return captures[0], nil
 	}
 	built := conf.manifest[slug]
+	// Filter a copy for this page, leaving originals in the manifest and on
+	// disk for direct links and press-kit downloads.
+	maxWidth := conf.maxWidthForImage(keyPath)
+	built.Files = cappedImageFiles(built.Files, maxWidth)
+	built.WebPFiles = cappedImageFiles(built.WebPFiles, maxWidth)
+	if len(built.Files) == 0 {
+		return nil, fmt.Errorf("no page-image candidate for %s within maxwidth %d", keyPath, maxWidth)
+	}
 	sizesAttr := effectiveSizesAttr(conf, keyPath, captures)
 	mediaAttr, err := effectiveMediaAttr(conf, keyPath, captures)
 	if err != nil {
-		log.Printf("Invalid media gate for %s: %v", keyPath, err)
-		return captures[0]
+		return nil, fmt.Errorf("invalid media gate for %s: %w", keyPath, err)
 	}
 	maxDPR, err := effectiveMaxDPR(conf, captures)
 	if err != nil {
-		log.Printf("Invalid max DPR for %s: %v", keyPath, err)
-		return captures[0]
+		return nil, fmt.Errorf("invalid max DPR for %s: %w", keyPath, err)
 	}
 	sizesAttr, err = maxDPRSizes(sizesAttr, maxDPR)
 	if err != nil {
-		log.Printf("Cannot apply max DPR to %s: %v", keyPath, err)
-		return captures[0]
+		return nil, fmt.Errorf("cannot apply max DPR to %s: %w", keyPath, err)
 	}
 	sourceHadSizes := sizesAttrRegex.Match(captures[1]) || sizesAttrRegex.Match(captures[3])
 	beforeSrc := rewriteBuildAttributes(captures[1], sourceHadSizes, sizesAttr)
@@ -425,7 +447,7 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 	if mediaAttr != "" {
 		buf.WriteString(transparentImage)
 	} else {
-		buf.WriteString(nameToImagePath(conf.config, built.OriginalName))
+		buf.WriteString(nameToImagePath(conf.config, built.Files[0].FileName))
 	}
 	buf.WriteString(`"`)
 
@@ -454,7 +476,7 @@ func rebuildImage(conf *transformConfig, relPath string, captures [][]byte) []by
 		buf.WriteString(`</picture>`)
 	}
 
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }
 
 func translateHtml(conf *transformConfig, inPath string, outPath string) (err error) {
@@ -477,13 +499,21 @@ func translateHtml(conf *transformConfig, inPath string, outPath string) (err er
 	}
 	// log.Printf("Relative path: %s", relPath)
 
+	var transformErr error
 	newBytes := imgRegex.ReplaceAllFunc(bytes, func(match []byte) []byte {
 		captures := imgRegex.FindSubmatch(match)
 		// log.Printf("Old Image: %s", match)
-		rebuilt := rebuildImage(conf, relPath, captures)
+		rebuilt, rebuildErr := rebuildImage(conf, relPath, captures)
+		if rebuildErr != nil {
+			transformErr = rebuildErr
+			return match
+		}
 		// log.Printf("New Image: %s", rebuilt)
 		return rebuilt
 	})
+	if transformErr != nil {
+		return transformErr
+	}
 
 	return writeFileIfChanged(outPath, newBytes)
 }

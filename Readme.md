@@ -195,6 +195,9 @@ manifestfile: enfasten_manifest.yml
 # The contents of the "sizes" attribute for responsive image tags, if this is
 # the empty string the attribute will be omitted.
 sizesattr: ""
+# Default maximum pixel width offered by page images; 0 disables the cap.
+# Full-resolution originals are retained for download links.
+maxwidth: 1980
 # Optional ordered rules for layout-specific sizes values and media gates. Patterns are
 # doublestar globs matched against image paths relative to inputfolder. The
 # first match wins, then sizesattr is used as the fallback. A sizes attribute
@@ -208,6 +211,7 @@ sizesrules:
     sizes: '(min-width: 60em) 30em, 90vw'
     media: '(min-width: 40em)'
     widths: [2200]
+    maxwidth: 2200
     webp: true
 # An array of strings specifying a command and arguments to run to optimize
 # images. If non-null, Enfasten will append all the files needing optimization to
@@ -272,7 +276,9 @@ attribute in generated HTML:
 <img src="images/always-visible.png" data-enfasten-media="none">
 ```
 
-**Note:** Enfasten detects changes to configured responsive widths and the WebP command. Other image-processing option changes such as `jpgquality` and `scalethreshold` may require deleting the manifest and processed images so they are rebuilt.
+Page-image candidates are limited to `maxwidth: 1980` by default. A matching `sizesrules` entry can override `maxwidth` with a positive pixel width or `0` for unlimited; omitting it inherits the global value. Both fallback `src` and PNG/JPEG/WebP `srcset` candidates obey the cap, including media-gated sources. Originals within the cap remain eligible. Larger originals and ordinary download links remain available at full resolution. This is a pixel-width limit for processed HTML images, not a file-size limit or a limit on CSS backgrounds or passthrough images. When needed, the cap-sized variant is generated even if the usual resize threshold would skip it.
+
+**Note:** Enfasten detects changes to configured responsive widths, width caps, and the WebP command. Other image-processing option changes such as `jpgquality` and `scalethreshold` may require deleting the manifest and processed images so they are rebuilt.
 
 ## The Manifest
 
