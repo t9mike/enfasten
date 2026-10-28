@@ -160,6 +160,8 @@ Enfasten consumes the attribute and wraps the image (or its generated `picture`)
 
 Existing anchors and buttons retain their behavior; no nested link is added. Source-authored `picture` elements are wrapped as a whole. The marker also works for images that are not resized, such as SVGs. Empty and `true` values enable linking, and `false` disables it. Images with empty or missing `alt` receive a filename-based link label. No JavaScript is required.
 
+Generated links carry `data-enfasten-image-link`. When the source image is in the manifest, they also carry `data-enfasten-width` and `data-enfasten-height` with the original dimensions, independent of responsive candidate caps or the image's displayed HTML dimensions. A website can use these attributes to enhance the normal links with a lightbox. Images without manifest dimensions remain normal links.
+
 ## Configuration
 
 Enfasten is configred through an `enfasten.yml` file. All keys are optional, here's a good basic config file for a Jekyll site that is a static 660px wide:

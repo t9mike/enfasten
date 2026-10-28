@@ -9,23 +9,23 @@ import (
 
 func TestClickableImagesPreserveLinksAndMarkup(t *testing.T) {
 	for _, test := range []struct{ name, input, want string }{
-		{"relative source", `<img src="images/full.png" alt="Screenshot" data-enfasten-clickable>`, `<a href="images/full.png"><img src="images/full.png" alt="Screenshot"></a>`},
+		{"relative source", `<img src="images/full.png" alt="Screenshot" data-enfasten-clickable>`, `<a href="images/full.png" data-enfasten-image-link><img src="images/full.png" alt="Screenshot"></a>`},
 		{"existing link", `<a href="/download"><span><img data-enfasten-clickable src="full.png"></span></a>`, `<a href="/download"><span><img src="full.png"></span></a>`},
 		{"existing button", `<button><img src="full.png" data-enfasten-clickable></button>`, `<button><img src="full.png"></button>`},
 		{"opt out", `<img src="full.png" data-enfasten-clickable="false">`, `<img src="full.png">`},
 		{"unmarked", `<img src="full.png">`, `<img src="full.png">`},
-		{"passthrough svg and empty alt", `<img data-enfasten-clickable='true' src='/icons/star.svg' alt='' />`, `<a href="/icons/star.svg" aria-label="star.svg"><img src='/icons/star.svg' alt='' /></a>`},
-		{"escaped URL", `<IMG SRC='/full.png?a=1&amp;b=2' ALT='A > B' DATA-ENFASTEN-CLICKABLE>`, `<a href="/full.png?a=1&amp;b=2"><IMG SRC='/full.png?a=1&amp;b=2' ALT='A > B'></a>`},
+		{"passthrough svg and empty alt", `<img data-enfasten-clickable='true' src='/icons/star.svg' alt='' />`, `<a href="/icons/star.svg" data-enfasten-image-link aria-label="star.svg"><img src='/icons/star.svg' alt='' /></a>`},
+		{"escaped URL", `<IMG SRC='/full.png?a=1&amp;b=2' ALT='A > B' DATA-ENFASTEN-CLICKABLE>`, `<a href="/full.png?a=1&amp;b=2" data-enfasten-image-link><IMG SRC='/full.png?a=1&amp;b=2' ALT='A > B'></a>`},
 		{"attribute text", `<img src="full.png" alt="example data-enfasten-clickable">`, `<img src="full.png" alt="example data-enfasten-clickable">`},
-		{"authored picture", `<picture><source srcset="small.webp"><img src="full.png" alt="Full" data-enfasten-clickable></picture>`, `<a href="full.png"><picture><source srcset="small.webp"><img src="full.png" alt="Full"></picture></a>`},
+		{"authored picture", `<picture><source srcset="small.webp"><img src="full.png" alt="Full" data-enfasten-clickable></picture>`, `<a href="full.png" data-enfasten-image-link><picture><source srcset="small.webp"><img src="full.png" alt="Full"></picture></a>`},
 		{"linked picture", `<a href="/keep"><picture><img src="full.png" data-enfasten-clickable></picture></a>`, `<a href="/keep"><picture><img src="full.png"></picture></a>`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := linkClickableImages([]byte(test.input), "")
+			got, err := linkClickableImages([]byte(test.input), "", nil)
 			if err != nil || string(got) != test.want {
 				t.Fatalf("got %s, %v; want %s", got, err, test.want)
 			}
-			again, err := linkClickableImages(got, "")
+			again, err := linkClickableImages(got, "", nil)
 			if err != nil || string(again) != string(got) {
 				t.Fatalf("second transformation changed the output: %s, %v", again, err)
 			}
@@ -37,8 +37,8 @@ func TestClickableImagesIgnoreCommentsAndRawText(t *testing.T) {
 	prefix := `<!-- <a><img src="comment.png" data-enfasten-clickable> -->` +
 		`<script>const template = '<a><img src="script.png" data-enfasten-clickable>';</script>` +
 		`<style>/* <a> */</style><textarea><a><img data-enfasten-clickable></textarea>`
-	got, err := linkClickableImages([]byte(prefix+`<img src=full.png alt=Full data-enfasten-clickable>`), "")
-	want := prefix + `<a href="full.png"><img src=full.png alt=Full></a>`
+	got, err := linkClickableImages([]byte(prefix+`<img src=full.png alt=Full data-enfasten-clickable>`), "", nil)
+	want := prefix + `<a href="full.png" data-enfasten-image-link><img src=full.png alt=Full></a>`
 	if err != nil || string(got) != want {
 		t.Fatalf("got %s, %v; want %s", got, err, want)
 	}
@@ -51,7 +51,7 @@ func TestClickableImagesRejectInvalidMarkers(t *testing.T) {
 		`<img data-enfasten-clickable>`,
 		`<picture><img src="full.png" data-enfasten-clickable>`,
 	} {
-		if _, err := linkClickableImages([]byte(input), ""); err == nil {
+		if _, err := linkClickableImages([]byte(input), "", nil); err == nil {
 			t.Fatalf("expected error for %s", input)
 		}
 	}
@@ -65,8 +65,8 @@ func TestClickableImageWindowTarget(t *testing.T) {
 		{"_self", ` target="_self"`},
 		{`image"window`, ` target="image&#34;window"`},
 	} {
-		got, err := linkClickableImages([]byte(`<img src="full.png" alt="Full" data-enfasten-clickable>`), test.target)
-		want := `<a href="full.png"` + test.attributes + `><img src="full.png" alt="Full"></a>`
+		got, err := linkClickableImages([]byte(`<img src="full.png" alt="Full" data-enfasten-clickable>`), test.target, nil)
+		want := `<a href="full.png" data-enfasten-image-link` + test.attributes + `><img src="full.png" alt="Full"></a>`
 		if err != nil || string(got) != want {
 			t.Fatalf("target %q: got %s, %v; want %s", test.target, got, err, want)
 		}
@@ -80,6 +80,7 @@ func TestClickableImageLinksOriginalThroughIncludesAndResponsiveRewrite(t *testi
 	conf.IncludeFolder = "includes"
 	conf.MaxWidth = 990
 	built := conf.manifest["example"]
+	built.Width, built.Height = 1000, 1500
 	built.Files = append(built.Files, builtImageFile{FileName: "example-a1b2c3d4-250px.png", Width: 250})
 	built.WebPFiles = []builtImageFile{{FileName: "example-a1b2c3d4-500px.webp", Width: 500}}
 	conf.manifest["example"] = built
@@ -105,7 +106,7 @@ func TestClickableImageLinksOriginalThroughIncludesAndResponsiveRewrite(t *testi
 		t.Fatal(err)
 	}
 	got := string(data)
-	if !strings.HasPrefix(got, `<a href="images/example.png"><picture>`) || !strings.HasSuffix(got, `</picture></a>`) {
+	if !strings.HasPrefix(got, `<a href="images/example.png" data-enfasten-image-link data-enfasten-width="1000" data-enfasten-height="1500"><picture>`) || !strings.HasSuffix(got, `</picture></a>`) {
 		t.Fatalf("original link must wrap the generated picture: %s", got)
 	}
 	if !strings.Contains(got, `srcset=`) || strings.Contains(got, "data-enfasten-clickable") || strings.Contains(got, "-original") {

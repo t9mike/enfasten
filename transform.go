@@ -489,10 +489,6 @@ func translateHtml(conf *transformConfig, inPath string, outPath string) (err er
 	if err != nil {
 		return err
 	}
-	bytes, err = linkClickableImages(bytes, conf.ClickableTarget)
-	if err != nil {
-		return fmt.Errorf("%s: %w", inPath, err)
-	}
 
 	// set up for HTML relative paths
 	inputPath := path.Join(conf.basePath, conf.InputFolder)
@@ -502,6 +498,14 @@ func translateHtml(conf *transformConfig, inPath string, outPath string) (err er
 		log.Fatalf("Can't make relative path %v", err)
 	}
 	// log.Printf("Relative path: %s", relPath)
+	bytes, err = linkClickableImages(bytes, conf.ClickableTarget, func(src string) (int, int) {
+		key := findImagePath(conf.config, relPath, src)
+		built := conf.manifest[conf.pathToSlug[key]]
+		return built.Width, built.Height
+	})
+	if err != nil {
+		return fmt.Errorf("%s: %w", inPath, err)
+	}
 
 	var transformErr error
 	newBytes := imgRegex.ReplaceAllFunc(bytes, func(match []byte) []byte {

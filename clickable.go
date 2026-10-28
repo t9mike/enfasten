@@ -7,6 +7,7 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -24,7 +25,7 @@ type htmlEdit struct {
 
 // Link before responsive rewriting so href retains the author's source URL,
 // while rebuildImage remains free to replace src and generate a picture.
-func linkClickableImages(contents []byte, target string) ([]byte, error) {
+func linkClickableImages(contents []byte, target string, dimensions func(string) (int, int)) ([]byte, error) {
 	target = strings.TrimSpace(target)
 	var edits []htmlEdit
 	anchorDepth, buttonDepth := 0, 0
@@ -104,6 +105,13 @@ func linkClickableImages(contents []byte, target string) ([]byte, error) {
 					return nil, fmt.Errorf("data-enfasten-clickable requires an img src")
 				}
 				link := `<a href="` + html.EscapeString(src) + `"`
+				link += ` data-enfasten-image-link`
+				if dimensions != nil {
+					width, height := dimensions(src)
+					if width > 0 && height > 0 {
+						link += ` data-enfasten-width="` + strconv.Itoa(width) + `" data-enfasten-height="` + strconv.Itoa(height) + `"`
+					}
+				}
 				if target != "" {
 					link += ` target="` + html.EscapeString(target) + `"`
 					// noopener makes named targets behave like _blank, preventing
