@@ -148,6 +148,18 @@ $ enfasten -lang en
 $ enfasten -cull
 ```
 
+## Clickable original images
+
+Add `data-enfasten-clickable` to an image to open its original source file:
+
+```html
+<img src="images/screenshot.png" alt="Screenshot" data-enfasten-clickable>
+```
+
+Enfasten consumes the attribute and wraps the image (or its generated `picture`) in an anchor. The `clickabletarget` configuration setting selects the window: empty (the default) opens in the current window, `_blank` opens a new tab with `rel="noopener"`, and a name such as `original-images` reuses that named window. The link retains the source `src` URL, pointing to the untouched file copied at its original path, while the displayed image still uses responsive and optimized candidates. It does not link to the hashed `-original` file, which may have passed through the optimizer. Keep `docopy: true` to publish those source-path copies.
+
+Existing anchors and buttons retain their behavior; no nested link is added. Source-authored `picture` elements are wrapped as a whole. The marker also works for images that are not resized, such as SVGs. Empty and `true` values enable linking, and `false` disables it. Images with empty or missing `alt` receive a filename-based link label. No JavaScript is required.
+
 ## Configuration
 
 Enfasten is configred through an `enfasten.yml` file. All keys are optional, here's a good basic config file for a Jekyll site that is a static 660px wide:

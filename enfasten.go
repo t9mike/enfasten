@@ -25,8 +25,10 @@ type config struct {
 	SizesAttr     string
 	MaxDPR        float64
 	MaxWidth      int
-	SizesRules    []sizesRule
-	OptimCommand  []string
+	// Target window for generated original-image links; empty uses the current window.
+	ClickableTarget string
+	SizesRules      []sizesRule
+	OptimCommand    []string
 	// Maximum number of image paths appended to each OptimCommand invocation.
 	// Zero keeps the historical single-command behavior.
 	OptimBatchSize int
