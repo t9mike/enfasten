@@ -731,7 +731,20 @@ func transferAndTransform(conf *transformConfig, whitelist *[]string, file strin
 	case ".html":
 		err = translateHtml(conf, file, outPath)
 	default:
-		err = copyFile(file, outPath)
+		// Direct image URLs (including lightbox/download links) use the same
+		// full-resolution master that went through OptimCommand. Source files
+		// remain untouched, and cached builds do not need a second optimizer pass.
+		source := file
+		relPath, relErr := filepath.Rel(conf.InputFolderPath(), file)
+		if relErr != nil {
+			return relErr
+		}
+		if slug, ok := conf.pathToSlug[relPath]; ok {
+			if built, ok := conf.manifest[slug]; ok && built.OriginalName != "" {
+				source = path.Join(conf.ImageFolderPath(), built.OriginalName)
+			}
+		}
+		err = copyFile(source, outPath)
 	}
 	return
 }

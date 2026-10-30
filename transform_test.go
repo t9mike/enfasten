@@ -544,3 +544,47 @@ func mustRebuildImage(t *testing.T, conf *transformConfig, relPath string, captu
 	}
 	return result
 }
+
+func TestDirectImageURLsUseOptimizedFullResolutionMaster(t *testing.T) {
+	base := t.TempDir()
+	conf := &transformConfig{
+		config:     &config{basePath: base, InputFolder: "site", OutputFolder: "fastsite", ImageFolder: "assets/eimages"},
+		manifest:   map[string]builtImage{"photo": {OriginalName: "photo-original.png", Width: 6771, Height: 2499}},
+		pathToSlug: map[string]string{"en/images/photo.png": "photo"},
+	}
+	source := filepath.Join(conf.InputFolderPath(), "en/images/photo.png")
+	master := filepath.Join(conf.ImageFolderPath(), "photo-original.png")
+	output := filepath.Join(base, "fastsite/en/images/photo.png")
+	for _, file := range []string{source, master} {
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(source, []byte("unoptimized source"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(master, []byte("optimized full-resolution master"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var whitelist []string
+	for range 2 {
+		if err := transferAndTransform(conf, &whitelist, source); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(output)
+		if err != nil || string(got) != "optimized full-resolution master" {
+			t.Fatalf("output = %q, %v", got, err)
+		}
+	}
+	got, err := os.ReadFile(source)
+	if err != nil || string(got) != "unoptimized source" {
+		t.Fatalf("source changed: %q, %v", got, err)
+	}
+	// Missing cached masters must fail instead of silently publishing unoptimized bytes.
+	if err := os.Remove(master); err != nil {
+		t.Fatal(err)
+	}
+	if err := transferAndTransform(conf, &whitelist, source); err == nil {
+		t.Fatal("expected missing master error")
+	}
+}
